@@ -1,0 +1,153 @@
+/**
+ * Axiom Forge - Layout Component
+ * Main application layout with sidebar and header
+ */
+
+import React from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+import { 
+  LayoutDashboard, 
+  Settings, 
+  Plus, 
+  Github, 
+  Sparkles,
+  ChevronRight
+} from 'lucide-react';
+import { useAppStore } from '../hooks/useAppStore';
+
+function Sidebar() {
+  const location = useLocation();
+  const { tokensConfigured } = useAppStore();
+
+  const navItems = [
+    { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/settings', icon: Settings, label: 'Settings' }
+  ];
+
+  const isActive = (path) => location.pathname === path;
+
+  return (
+    <aside className="w-64 bg-slate-900/50 border-r border-slate-800 flex flex-col">
+      {/* Logo */}
+      <div className="p-6 border-b border-slate-800">
+        <Link to="/" className="flex items-center gap-3 group">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-shadow">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="font-bold text-lg text-white">Axiom Forge</h1>
+            <p className="text-xs text-slate-500">Idea to App Pipeline</p>
+          </div>
+        </Link>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 p-4 space-y-1">
+        {navItems.map((item) => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+              isActive(item.path)
+                ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <item.icon className="w-5 h-5" />
+            <span className="font-medium">{item.label}</span>
+            {isActive(item.path) && (
+              <ChevronRight className="w-4 h-4 ml-auto" />
+            )}
+          </Link>
+        ))}
+
+        {/* New Project Button */}
+        <button
+          onClick={() => window.electronAPI.shell.openExternal('https://axiomforge.io/templates')}
+          className="w-full flex items-center gap-3 px-4 py-3 mt-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-lg shadow-indigo-500/20"
+        >
+          <Plus className="w-5 h-5" />
+          <span className="font-medium">New Project</span>
+        </button>
+      </nav>
+
+      {/* Token Status */}
+      <div className="p-4 border-t border-slate-800">
+        <p className="text-xs text-slate-500 mb-3 uppercase tracking-wider">Services</p>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm">
+            <div className={`w-2 h-2 rounded-full ${tokensConfigured.github ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+            <span className={tokensConfigured.github ? 'text-slate-300' : 'text-slate-500'}>
+              GitHub
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <div className={`w-2 h-2 rounded-full ${tokensConfigured.vercel ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+            <span className={tokensConfigured.vercel ? 'text-slate-300' : 'text-slate-500'}>
+              Vercel
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t border-slate-800">
+        <a
+          href="https://github.com/axiom-forge/axiom-forge"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            window.electronAPI.shell.openExternal('https://github.com/axiom-forge/axiom-forge');
+          }}
+          className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          <Github className="w-4 h-4" />
+          <span>Open Source</span>
+        </a>
+      </div>
+    </aside>
+  );
+}
+
+function Header() {
+  const location = useLocation();
+  
+  const getPageTitle = () => {
+    const path = location.pathname;
+    if (path === '/') return 'Dashboard';
+    if (path === '/settings') return 'Settings';
+    if (path.startsWith('/projects/')) return 'Project Details';
+    return 'Axiom Forge';
+  };
+
+  return (
+    <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center justify-between px-6">
+      <h2 className="text-xl font-semibold text-white">{getPageTitle()}</h2>
+      
+      <div className="flex items-center gap-4">
+        {/* Status Indicator */}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-xs font-medium text-emerald-400">System Ready</span>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Layout() {
+  return (
+    <div className="min-h-screen bg-slate-950 flex">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0">
+        <Header />
+        <main className="flex-1 overflow-auto p-6">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export default Layout;
