@@ -1,0 +1,29 @@
+name: Build and Release Axiom Forge
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on tags like v1.0.0, v1.2.3
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22 # Matching your package.json engine requirement
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build & Publish (Windows)
+        # We pass the GITHUB_TOKEN so electron-builder can create the release
+        run: npm run build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # If you have signing keys later, you would add them here
