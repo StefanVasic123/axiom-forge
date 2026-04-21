@@ -22,7 +22,7 @@ const initialState = {
   
   // Settings
   settings: {
-    ollamaHost: 'http://localhost:11434',
+    ollamaHost: 'http://127.0.0.1:11434',
     defaultModel: 'llama3.2:1b',
     theme: 'dark',
     autoDeploy: false

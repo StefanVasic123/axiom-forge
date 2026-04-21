@@ -1,0 +1,213 @@
+{
+  "name": "Tool Verification Platform",
+  "files": [
+    {
+      "path": "src/components/auth/Login.tsx",
+      "language": "typescript",
+      "description": "This file should implement the user login functionality using NextAuth. It should include a form for user credentials, handle form submission, and manage authentication state. Ensure to provide feedback for successful or failed login attempts and connect to the authentication API routes.",
+      "dependencies": [
+        "next-auth",
+        "react-hook-form"
+      ]
+    },
+    {
+      "path": "src/components/auth/Register.tsx",
+      "language": "typescript",
+      "description": "This file should handle user registration, including a form for user details. It should validate input fields, submit the data to the backend for user creation, and manage the registration state. Provide appropriate user feedback for success or errors.",
+      "dependencies": [
+        "next-auth",
+        "react-hook-form"
+      ]
+    },
+    {
+      "path": "src/dashboard/UserDashboard.tsx",
+      "language": "typescript",
+      "description": "This file should render the user dashboard, displaying user profile information and submitted tools. It should fetch data from the backend API, handle loading states, and provide options for users to manage their submissions. Ensure to implement error handling for API calls.",
+      "dependencies": [
+        "axios",
+        "react-query"
+      ]
+    },
+    {
+      "path": "src/tools/ToolDetail.tsx",
+      "language": "typescript",
+      "description": "This file should display detailed information about a specific tool, including its verification status. It should fetch data from the tools API based on the tool ID passed as a prop. Implement loading and error states, and provide a user-friendly interface for viewing tool details.",
+      "dependencies": [
+        "axios",
+        "react-query"
+      ]
+    },
+    {
+      "path": "src/admin/AdminPanel.tsx",
+      "language": "typescript",
+      "description": "This file should provide the admin interface for reviewing user submissions. It should fetch all submissions from the admin API, display them in a manageable format, and allow admins to approve or reject submissions. Include error handling for API interactions.",
+      "dependencies": [
+        "axios",
+        "react-query"
+      ]
+    },
+    {
+      "path": "src/api/auth/index.ts",
+      "language": "typescript",
+      "description": "This file should define the API routes for user authentication, including login and registration endpoints. Implement necessary middleware for session management and error handling. Ensure to validate incoming requests and provide appropriate responses.",
+      "dependencies": [
+        "next-auth",
+        "express"
+      ]
+    },
+    {
+      "path": "src/api/tools/index.ts",
+      "language": "typescript",
+      "description": "This file should define the API routes for fetching and submitting tools. Implement CRUD operations, ensuring to validate data and handle errors. Connect to the database using Prisma for data management.",
+      "dependencies": [
+        "prisma",
+        "express"
+      ]
+    },
+    {
+      "path": "src/api/admin/index.ts",
+      "language": "typescript",
+      "description": "This file should define the API routes for admin functionalities, including fetching all submissions and verifying tools. Implement necessary authentication checks and error handling. Ensure to connect to the database for data retrieval.",
+      "dependencies": [
+        "prisma",
+        "express"
+      ]
+    },
+    {
+      "path": "src/middleware/errorHandler.ts",
+      "language": "typescript",
+      "description": "This file should implement centralized error handling middleware for the application. It should catch errors from API routes and provide standardized error responses. Ensure to log errors for monitoring purposes.",
+      "dependencies": [
+        "winston"
+      ]
+    },
+    {
+      "path": "src/lib/prisma.ts",
+      "language": "typescript",
+      "description": "This file should initialize the Prisma client for database interactions. Ensure to handle connection errors and export the client for use in API routes. Include necessary configurations for connecting to the PostgreSQL database.",
+      "dependencies": [
+        "prisma"
+      ]
+    },
+    {
+      "path": "src/styles/globals.css",
+      "language": "css",
+      "description": "This file should contain global CSS styles for the application. Define base styles, typography, and layout settings to ensure a consistent look and feel across all components.",
+      "dependencies": []
+    },
+    {
+      "path": "src/styles/theme.css",
+      "language": "css",
+      "description": "This file should define theme-specific styles, including color schemes and component variations. Ensure to use CSS variables for easy theme management and customization.",
+      "dependencies": []
+    },
+    {
+      "path": "src/hooks/useAuth.ts",
+      "language": "typescript",
+      "description": "This file should implement a custom React hook for managing authentication state. It should provide functions for logging in, logging out, and checking the current user's authentication status. Ensure to handle session management effectively.",
+      "dependencies": [
+        "next-auth/react"
+      ]
+    },
+    {
+      "path": "src/context/AuthContext.tsx",
+      "language": "typescript",
+      "description": "This file should create a context provider for managing authentication state across the application. It should wrap the application in the provider and expose authentication state and functions to child components.",
+      "dependencies": [
+        "react"
+      ]
+    },
+    {
+      "path": "src/types/user.ts",
+      "language": "typescript",
+      "description": "This file should define TypeScript types for user-related data structures, including user profiles and authentication tokens. Ensure to include necessary fields for user management.",
+      "dependencies": []
+    },
+    {
+      "path": "src/types/tool.ts",
+      "language": "typescript",
+      "description": "This file should define TypeScript types for tool-related data structures, including tool details and verification statuses. Ensure to include necessary fields for managing tools.",
+      "dependencies": []
+    },
+    {
+      "path": "src/types/admin.ts",
+      "language": "typescript",
+      "description": "This file should define TypeScript types for admin-related data structures, including submission reviews and admin actions. Ensure to include necessary fields for managing admin functionalities.",
+      "dependencies": []
+    },
+    {
+      "path": "src/tests/unit/Login.test.tsx",
+      "language": "typescript",
+      "description": "This file should contain unit tests for the Login component. Ensure to test various scenarios, including successful login, failed login, and form validation. Use Jest and React Testing Library for testing.",
+      "dependencies": [
+        "jest",
+        "react-testing-library"
+      ]
+    },
+    {
+      "path": "src/tests/integration/UserDashboard.test.tsx",
+      "language": "typescript",
+      "description": "This file should contain integration tests for the UserDashboard component. Ensure to test the interaction with the user API and the rendering of user data. Use Jest and React Testing Library for testing.",
+      "dependencies": [
+        "jest",
+        "react-testing-library"
+      ]
+    },
+    {
+      "path": "next.config.js",
+      "language": "javascript",
+      "description": "This file should configure Next.js settings, including environment variables and custom webpack configurations if necessary. Ensure to optimize for performance and compatibility.",
+      "dependencies": []
+    },
+    {
+      "path": "prisma.schema",
+      "language": "prisma",
+      "description": "This file should define the Prisma schema for the PostgreSQL database. Ensure to include models for users, tools, and submissions, and define relationships between them. Run migrations to keep the database in sync with the schema.",
+      "dependencies": []
+    },
+    {
+      "path": "env.config",
+      "language": "plaintext",
+      "description": "This file should contain environment variables for the application, including database connection strings and secret keys. Ensure to keep sensitive information secure and not expose it in version control.",
+      "dependencies": []
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "description": "This file should define the project's dependencies, scripts, and metadata. Ensure to include all necessary packages for the application to function correctly and specify scripts for building and running the application.",
+      "dependencies": []
+    },
+    {
+      "path": "tsconfig.json",
+      "language": "json",
+      "description": "This file should configure TypeScript settings for the project, including compiler options and type definitions. Ensure to enable strict type checking for better code quality.",
+      "dependencies": []
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "description": "This file should provide documentation for the project, including setup instructions, usage guidelines, and contribution guidelines. Ensure to keep it clear and concise for future developers.",
+      "dependencies": []
+    }
+  ],
+  "metadata": {
+    "name": "Tool Verification Platform",
+    "description": "A web application for user authentication, tool and material verification, and admin management."
+  },
+  "createdAt": "2026-04-21T19:52:20.299Z",
+  "projectId": "cmo91c30m0002uvq57malgc5i",
+  "deployment": {
+    "strategy": "vercel",
+    "requiredKeys": [
+      "DATABASE_URL",
+      "NEXTAUTH_SECRET"
+    ],
+    "buildCommands": [
+      "npm install",
+      "npm run build"
+    ]
+  },
+  "manifestId": "cmo91c30m0002uvq57malgc5i",
+  "description": "A web application for user authentication, tool and material verification, and admin management.",
+  "projectType": "nextjs"
+}

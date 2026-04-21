@@ -31,23 +31,60 @@ const PHASE_DISPLAY = {
 
 function FloatingProgress() {
   const [isMinimized, setIsMinimized] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
   const [progress, setProgress] = useState({
     phase: 'idle',
     message: 'Waiting to start...',
     progress: 0,
     projectId: null,
     taskId: null,
-    urls: null
+    urls: null,
+    history: []
   });
+
+  const [version, setVersion] = useState('v1.1.9');
 
   // Subscribe to task progress
   useEffect(() => {
+    // Get real version
+    window.electronAPI.app.getVersion().then(res => {
+      if (res.success) setVersion(`v${res.version}`);
+    });
+
+    // 1. Parse projectId from URL
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get('projectId');
+
+    // 2. Initial sync - check if there's already an active task
+    const syncStatus = async () => {
+      if (projectId) {
+        try {
+          const result = await window.electronAPI.task.getActiveTaskByProject(projectId);
+          if (result.success && result.task) {
+            setProgress(prev => ({
+              ...prev,
+              ...result.task,
+              phase: result.task.phase || prev.phase,
+              message: result.task.message || prev.message || 'Restoring session...',
+              history: [...(prev.history || []), { time: Date.now(), msg: 'Synced with background task' }]
+            }));
+          }
+        } catch (error) {
+          console.error('[Floating] Sync failed:', error);
+        }
+      }
+    };
+
+    syncStatus();
+
+    // 3. Listen for future updates
     const unsubscribe = window.electronAPI.task.onProgress((data) => {
       setProgress(prev => ({
         ...prev,
         ...data,
         phase: data.phase || prev.phase,
-        message: data.message || prev.message
+        message: data.message || prev.message,
+        history: [...(prev.history || []), { time: Date.now(), msg: data.message }]
       }));
     });
 
@@ -131,11 +168,25 @@ function FloatingProgress() {
           </div>
           <div>
             <h3 className="font-semibold text-white text-sm">{phaseInfo.label}</h3>
-            <p className="text-xs text-slate-500">Axiom Forge</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-slate-500">Axiom Forge</p>
+              <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 text-[10px] font-bold border border-indigo-500/30">
+                {version}
+              </span>
+            </div>
           </div>
         </div>
         
         <div className="flex items-center gap-1 window-no-drag">
+          <button
+            onClick={() => setShowLogs(!showLogs)}
+            className={`p-2 rounded-lg transition-colors ${
+              showLogs ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-800 hover:text-white'
+            }`}
+            title="Toggle Diagnostics"
+          >
+            <AlertCircle className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setIsMinimized(true)}
             className="p-2 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-white transition-colors"
@@ -208,6 +259,25 @@ function FloatingProgress() {
                   <ExternalLink className="w-3 h-3" />
                   View Live Site
                 </a>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Diagnostics Logs */}
+        {showLogs && (
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Engine Logs</p>
+            <div className="max-h-80 overflow-y-auto space-y-1 bg-black/30 rounded p-2 font-mono text-[10px]">
+              {progress.history?.length > 0 ? (
+                progress.history.slice().reverse().map((log, i) => (
+                  <div key={i} className="flex gap-2">
+                    <span className="text-slate-600">[{new Date(log.time).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]</span>
+                    <span className="text-slate-400">{log.msg}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-slate-600 italic">No logs available...</div>
               )}
             </div>
           </div>

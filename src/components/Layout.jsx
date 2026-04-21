@@ -18,6 +18,15 @@ import { useAppStore } from '../hooks/useAppStore';
 function Sidebar() {
   const location = useLocation();
   const { tokensConfigured } = useAppStore();
+  const [version, setVersion] = React.useState('...');
+
+  React.useEffect(() => {
+    window.electronAPI.app.getVersion()
+      .then(res => {
+        if (res.success) setVersion(res.version);
+      })
+      .catch(() => setVersion('1.1.9'));
+  }, []);
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -91,7 +100,7 @@ function Sidebar() {
       </div>
 
       {/* Footer */}
-      <div className="p-4 border-t border-slate-800">
+      <div className="p-4 border-t border-slate-800 flex flex-col gap-3">
         <a
           href="https://github.com/axiom-forge/axiom-forge"
           target="_blank"
@@ -105,6 +114,9 @@ function Sidebar() {
           <Github className="w-4 h-4" />
           <span>Open Source</span>
         </a>
+        <div className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] pl-1">
+          Axiom Forge v{version}
+        </div>
       </div>
     </aside>
   );

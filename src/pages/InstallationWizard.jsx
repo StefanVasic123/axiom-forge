@@ -14,7 +14,8 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
-  AlertCircle
+  AlertCircle,
+  Play
 } from 'lucide-react';
 import { useAppStore } from '../hooks/useAppStore';
 
@@ -115,29 +116,100 @@ function WelcomeStep({ onNext }) {
 }
 
 function OllamaStep({ onNext, onBack }) {
-  const [status, setStatus] = useState('checking'); // checking, ready, error
+  const [status, setStatus] = useState('checking'); // checking, engine_missing, model_missing, ready, error
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [message, setMessage] = useState('Checking Ollama...');
+  const [pullProgress, setPullProgress] = useState(0);
+  const [pullStatus, setPullStatus] = useState('');
+  const [isPulling, setIsPulling] = useState(false);
 
   const checkOllama = async () => {
     setStatus('checking');
-    setMessage('Checking Ollama...');
+    setMessage('Checking Ollama installation...');
     
     try {
-      // In a real implementation, this would check via the main process
-      // For now, we'll simulate the check
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const installedStatus = await window.electronAPI.ollama.checkInstalled();
+      setIsInstalled(installedStatus.installed);
+
+      const health = await window.electronAPI.ollama.checkHealth();
       
-      // Simulate success
+      if (!health.available) {
+        setStatus('engine_missing');
+        setMessage(installedStatus.installed ? 'Ollama Engine is installed but stopped' : 'Ollama Engine not detected');
+        return;
+      }
+
+      if (!health.hasModel) {
+        setStatus('model_missing');
+        setMessage('Model llama3.2:1b not found');
+        return;
+      }
+
       setStatus('ready');
-      setMessage('Ollama is running with llama3.2:1b');
+      setMessage('Ollama is ready with llama3.2:1b');
     } catch (error) {
+      console.error('[Ollama] Check failed:', error);
       setStatus('error');
-      setMessage('Ollama not found. Please install and run Ollama.');
+      setMessage('Failed to communicate with Ollama');
+    }
+  };
+
+  const handleStartServer = async () => {
+    setIsStarting(true);
+    setStatus('checking');
+    setMessage('Waking up Ollama engine...');
+    
+    try {
+      const result = await window.electronAPI.ollama.startServer();
+      if (result.success) {
+        await checkOllama();
+      } else {
+        setStatus('error');
+        setMessage(result.error || 'Failed to start Ollama');
+      }
+    } catch (error) {
+      console.error('[Ollama] Start failed:', error);
+      setStatus('error');
+      setMessage('Could not launch Ollama process');
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const handlePullModel = async () => {
+    setIsPulling(true);
+    setPullProgress(0);
+    setPullStatus('Starting download...');
+
+    try {
+      const result = await window.electronAPI.ollama.pullModel('llama3.2:1b');
+      if (result.success) {
+        setStatus('ready');
+        setMessage('Model downloaded successfully!');
+      } else {
+        setStatus('error');
+        setMessage(result.error || 'Failed to download model');
+      }
+    } catch (error) {
+      console.error('[Ollama] Pull failed:', error);
+      setStatus('error');
+      setMessage('Download interrupted');
+    } finally {
+      setIsPulling(false);
     }
   };
 
   React.useEffect(() => {
     checkOllama();
+
+    // Subscribe to pull progress
+    const unsubscribe = window.electronAPI.ollama.onPullProgress((data) => {
+      if (data.percent) setPullProgress(data.percent);
+      if (data.status) setPullStatus(data.status);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -153,39 +225,124 @@ function OllamaStep({ onNext, onBack }) {
       </div>
 
       <div className="card p-6 max-w-md mx-auto">
-        <div className="flex items-center gap-4 mb-4">
+        <div className="flex items-center gap-4 mb-6">
           <div className={`w-3 h-3 rounded-full ${
-            status === 'checking' ? 'bg-amber-500 animate-pulse' :
+            status === 'checking' || isPulling ? 'bg-amber-500 animate-pulse' :
             status === 'ready' ? 'bg-emerald-500' :
             'bg-rose-500'
           }`} />
-          <span className="text-slate-300">{message}</span>
+          <span className="text-sm font-medium text-slate-300">{message}</span>
         </div>
 
-        {status === 'error' && (
-          <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-lg mb-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-rose-400 font-medium mb-1">Ollama not detected</p>
-                <p className="text-xs text-rose-300/70 mb-3">
-                  Install Ollama and pull the llama3.2:1b model
-                </p>
-                <code className="block bg-rose-950/50 p-2 rounded text-xs text-rose-300 font-mono">
-                  ollama pull llama3.2:1b
-                </code>
+        {status === 'engine_missing' && (
+          <div className="space-y-4">
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-lg">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-rose-400 font-medium mb-1">
+                    {isInstalled ? 'Ollama is stopped' : 'Ollama Engine not found'}
+                  </p>
+                  <p className="text-xs text-rose-300/70 mb-3">
+                    {isInstalled 
+                      ? 'The Ollama software is installed, but the background service is not running.' 
+                      : 'You need to install Ollama to provide the local AI backbone.'}
+                  </p>
+                  {!isInstalled && (
+                    <button 
+                      onClick={() => window.electronAPI.shell.openExternal('https://ollama.com/download')}
+                      className="flex items-center gap-2 text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
+                    >
+                      Download Ollama from ollama.com
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
+            </div>
+            
+            {isInstalled ? (
+              <button 
+                onClick={handleStartServer} 
+                className={`btn-primary w-full flex items-center justify-center gap-2 ${isStarting ? 'opacity-70 cursor-not-allowed' : ''}`}
+                disabled={isStarting}
+              >
+                {isStarting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Starting Ollama...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4" />
+                    Start Ollama Engine
+                  </>
+                )}
+              </button>
+            ) : (
+              <button onClick={checkOllama} className="btn-secondary w-full">
+                Check Again
+              </button>
+            )}
+          </div>
+        )}
+
+        {status === 'model_missing' && !isPulling && (
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+              <div className="flex items-start gap-3">
+                <Sparkles className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-amber-400 font-medium mb-1">Model Missing</p>
+                  <p className="text-xs text-amber-300/70">
+                    Axiom Forge requires the 1.3GB **llama3.2:1b** model for fast, local code generation.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <button onClick={handlePullModel} className="btn-primary w-full">
+              Download Model (1.3 GB)
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {isPulling && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="text-slate-400">{pullStatus}</span>
+              <span className="text-indigo-400 font-semibold">{pullProgress}%</span>
+            </div>
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-indigo-500 transition-all duration-300 ease-out"
+                style={{ width: `${pullProgress}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-slate-500 text-center italic">
+              Please keep Axiom Forge open during download
+            </p>
+          </div>
+        )}
+
+        {status === 'ready' && !isPulling && (
+          <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg mb-4">
+            <div className="flex items-center gap-3">
+              <Check className="w-5 h-5 text-emerald-400" />
+              <p className="text-sm text-emerald-400 font-medium">Ready to Forge</p>
             </div>
           </div>
         )}
 
-        <button
-          onClick={checkOllama}
-          className="btn-secondary w-full"
-          disabled={status === 'checking'}
-        >
-          {status === 'checking' ? 'Checking...' : 'Check Again'}
-        </button>
+        {(status === 'error' || status === 'checking') && (
+          <button
+            onClick={checkOllama}
+            className="btn-secondary w-full"
+            disabled={status === 'checking'}
+          >
+            {status === 'checking' ? 'Checking...' : 'Try Again'}
+          </button>
+        )}
       </div>
 
       <div className="flex justify-between max-w-md mx-auto">
@@ -196,7 +353,7 @@ function OllamaStep({ onNext, onBack }) {
         <button 
           onClick={onNext} 
           className="btn-primary"
-          disabled={status !== 'ready'}
+          disabled={status !== 'ready' || isPulling}
         >
           Continue
           <ChevronRight className="w-5 h-5" />

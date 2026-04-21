@@ -10,6 +10,10 @@ import Store from 'electron-store';
 import { SecurityManager } from '../src/lib/security.js';
 import { TaskOrchestrator } from '../src/lib/taskOrchestrator.js';
 
+import { exec, spawn } from 'child_process';
+import util from 'util';
+const execAsync = util.promisify(exec);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -44,7 +48,7 @@ function createMainWindow() {
     titleBarStyle: 'hiddenInset',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -89,8 +93,8 @@ function createFloatingWindow(projectData = null) {
   }
 
   floatingWindow = new BrowserWindow({
-    width: 400,
-    height: 200,
+    width: 500,
+    height: 450,
     x: 100,
     y: 100,
     alwaysOnTop: true,
@@ -99,16 +103,19 @@ function createFloatingWindow(projectData = null) {
     minimizable: false,
     maximizable: false,
     titleBarStyle: 'hidden',
-    frame: false,
-    transparent: true,
-    opacity: 0.95,
+    show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      webSecurity: true
     }
   });
+
+  console.log('--- AXIOM FORGE DIAGNOSTICS [v1.1.9] ---');
+  console.log('[Main] Floating window created with size: 500x450');
+  console.log('[Main] Current directory:', __dirname);
 
   const isDev = process.env.NODE_ENV === 'development';
   const route = projectData ? `/floating?projectId=${projectData.id}` : '/floating';
@@ -123,6 +130,12 @@ function createFloatingWindow(projectData = null) {
 
   // Make draggable
   floatingWindow.setMovable(true);
+
+  // Show window when ready
+  floatingWindow.once('ready-to-show', () => {
+    floatingWindow.show();
+    floatingWindow.focus();
+  });
 
   floatingWindow.on('closed', () => {
     floatingWindow = null;
@@ -154,8 +167,10 @@ function handleDeepLink(url) {
     const searchParams = Object.fromEntries(urlObj.searchParams);
 
     switch (action) {
+      case 'generate':
       case 'build':
         if (searchParams.id) {
+          console.log('[Deep Link] Triggering generation for manifest:', searchParams.id);
           mainWindow.webContents.send('deep-link:build', {
             manifestId: searchParams.id,
             ...searchParams
@@ -195,11 +210,16 @@ function handleDeepLink(url) {
  * Register custom protocol
  */
 function registerProtocol() {
+  console.log('[Protocol] Attempting to register "axiom://" protocol...');
+  
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient('axiom', process.execPath, [path.resolve(process.argv[1])]);
+      const devPath = path.resolve(process.argv[1]);
+      console.log('[Protocol] Registering in DEV mode with path:', devPath);
+      app.setAsDefaultProtocolClient('axiom', process.execPath, [devPath]);
     }
   } else {
+    console.log('[Protocol] Registering in PROD mode.');
     app.setAsDefaultProtocolClient('axiom');
   }
 }
@@ -397,15 +417,28 @@ ipcMain.handle('project:update-status', async (event, { id, status, metadata = {
  * Task Orchestrator IPC
  */
 ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, token }) => {
+  const fs = await import('fs');
+  const logPath = 'C:\\Users\\StefanV\\Desktop\\Projects\\axiom-forge\\axiom-live-debug.log';
+  const timestamp = new Date().toISOString();
+  
   try {
-    const result = await taskOrchestrator.startGeneration(manifestId, projectId, token, (update) => {
+    fs.appendFileSync(logPath, `\n[${timestamp}] --- NEW TASK RECEIVED ---\n`);
+    fs.appendFileSync(logPath, `[${timestamp}] ManifestId: ${manifestId} | ProjectId: ${projectId}\n`);
+    
+    // Start generation asynchronously
+    taskOrchestrator.startGeneration(manifestId, projectId, token, (update) => {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] PROGRESS ${update.progress}%: ${update.phase} - ${update.message}\n`);
+      
       // Send progress updates to renderer
       mainWindow?.webContents.send('task:progress', update);
       floatingWindow?.webContents.send('task:progress', update);
+    }).catch(error => {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
     });
-    return { success: true, result };
+    
+    return { success: true, message: 'Generation task dispatched' };
   } catch (error) {
-    console.error('[Task] Generation error:', error);
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] CRITICAL SETUP ERROR: ${error.message}\n`);
     return { success: false, error: error.message };
   }
 });
@@ -449,6 +482,77 @@ ipcMain.handle('task:get-status', async (event, { taskId }) => {
     return { success: true, status };
   } catch (error) {
     console.error('[Task] Get status error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('task:get-active-by-project', async (event, { projectId }) => {
+  try {
+    const task = taskOrchestrator.getActiveTaskByProject(projectId);
+    return { success: true, task };
+  } catch (error) {
+    console.error('[Task] Get active by project error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ollama:check-installed', async () => {
+  try {
+    const cmd = process.platform === 'win32' ? 'where ollama' : 'which ollama';
+    await execAsync(cmd);
+    return { installed: true };
+  } catch (e) {
+    return { installed: false };
+  }
+});
+
+ipcMain.handle('ollama:start-server', async () => {
+  try {
+    console.log('[Ollama] Attempting to start server via "ollama serve"...');
+    const ollamaProcess = spawn('ollama', ['serve'], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    ollamaProcess.unref();
+    
+    // Polling until available or timeout (10 seconds)
+    for (let i = 0; i < 10; i++) {
+       await new Promise(r => setTimeout(r, 1000));
+       const check = await taskOrchestrator.ollama.healthCheck();
+       if (check.available) {
+         console.log('[Ollama] Server started successfully and is reachable.');
+         return { success: true };
+       }
+       console.log(`[Ollama] Waiting for server... (${i + 1}/10)`);
+    }
+    
+    return { success: false, error: 'Ollama took too long to start' };
+  } catch (e) {
+    console.error('[Ollama] Startup error:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+/**
+ * Ollama Engine IPC
+ */
+ipcMain.handle('ollama:check-health', async () => {
+  try {
+    return await taskOrchestrator.ollama.healthCheck();
+  } catch (error) {
+    console.error('[Ollama] Health check error:', error);
+    return { available: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ollama:pull-model', async (event, { model }) => {
+  try {
+    return await taskOrchestrator.ollama.pullModel(model, (progress) => {
+      // Forward pull progress to renderer
+      mainWindow?.webContents.send('ollama:pull-progress', progress);
+    });
+  } catch (error) {
+    console.error('[Ollama] Pull model error:', error);
     return { success: false, error: error.message };
   }
 });

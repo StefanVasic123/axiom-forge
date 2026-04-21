@@ -11,26 +11,47 @@ export function useAppStore() {
 
   // ==================== FIRST RUN CHECK ====================
   const checkFirstRun = useCallback(async () => {
+    console.log('[Setup] Starting first run check...');
     try {
       // Check if settings exist
-      const projects = await window.electronAPI.project.getAll();
+      const projectsResult = await window.electronAPI.project.getAll();
+      const projects = projectsResult.projects || [];
+      console.log('[Setup] Projects found:', projects.length);
       
-      if (projects.success && projects.projects.length === 0) {
+      if (projects.length === 0) {
         // Check if any tokens are configured
         const githubResult = await window.electronAPI.security.hasToken('github-token');
         const vercelResult = await window.electronAPI.security.hasToken('vercel-token');
         
         const hasAnyToken = githubResult.exists || vercelResult.exists;
+        console.log('[Setup] Tokens check:', { hasAnyToken, github: githubResult.exists, vercel: vercelResult.exists });
         
-        if (!hasAnyToken) {
+        // In addition to tokens, we MUST have Ollama and the model ready
+        const ollamaHealth = await window.electronAPI.ollama.checkHealth();
+        const isOllamaReady = ollamaHealth.available && ollamaHealth.hasModel;
+        console.log('[Setup] Ollama check:', ollamaHealth);
+
+        if (!hasAnyToken || !isOllamaReady) {
+          console.log('[Setup] Forcing Wizard: tokens or ollama not ready.');
           actions.setFirstRun(true);
           return;
         }
       }
       
+      // Even if we have projects/tokens, check Ollama health
+      const finalOllamaCheck = await window.electronAPI.ollama.checkHealth();
+      console.log('[Setup] Final health check:', finalOllamaCheck);
+      
+      if (!finalOllamaCheck.available || !finalOllamaCheck.hasModel) {
+        console.log('[Setup] Forcing Wizard: Final health check failed.');
+        actions.setFirstRun(true);
+        return;
+      }
+
+      console.log('[Setup] All checks passed. Proceeding to Dashboard.');
       actions.setFirstRun(false);
     } catch (error) {
-      console.error('Error checking first run:', error);
+      console.error('[Setup] Error checking first run:', error);
       actions.setFirstRun(true);
     }
   }, [actions]);
@@ -136,12 +157,12 @@ export function useAppStore() {
   }, [actions, checkTokens]);
 
   // ==================== TASK OPERATIONS ====================
-  const startGeneration = useCallback(async (manifestId, projectId) => {
+  const startGeneration = useCallback(async (manifestId, projectId, token) => {
     try {
       // Show floating window
       await window.electronAPI.window.showFloating({ id: projectId });
       
-      const result = await window.electronAPI.task.startGeneration(manifestId, projectId);
+      const result = await window.electronAPI.task.startGeneration(manifestId, projectId, token);
       return result;
     } catch (error) {
       actions.setError(error.message);
@@ -182,9 +203,17 @@ export function useAppStore() {
   // ==================== DEEP LINK HANDLERS ====================
   useEffect(() => {
     // Subscribe to deep link events
-    const unsubscribeBuild = window.electronAPI.deepLink.onBuild((data) => {
-      console.log('Deep link build:', data);
-      // Handle build deep link
+    const unsubscribeBuild = window.electronAPI.deepLink.onBuild(async (data) => {
+      console.log('Deep link build received:', data);
+      
+      if (data.manifestId) {
+        try {
+          // Trigger the generation process with the security token
+          await startGeneration(data.manifestId, data.projectId || data.manifestId, data.token);
+        } catch (error) {
+          console.error('Failed to auto-start generation:', error);
+        }
+      }
     });
 
     const unsubscribeConfig = window.electronAPI.deepLink.onConfig((data) => {
@@ -238,7 +267,8 @@ export function useAppStore() {
     startGeneration,
     configureProject,
     startDeployment,
-    stopTask
+    stopTask,
+    setFirstRun: actions.setFirstRun
   };
 }
 

@@ -220,6 +220,7 @@ export class SecurityManager {
     }
   }
 
+
   /**
    * Delete a stored token
    * @param {string} key - Token identifier

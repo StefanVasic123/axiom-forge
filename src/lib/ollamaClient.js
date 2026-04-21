@@ -9,7 +9,7 @@ import fetch from 'node-fetch';
 import EventEmitter from 'events';
 
 // ==================== CONSTANTS ====================
-const DEFAULT_HOST = 'http://localhost:11434';
+const DEFAULT_HOST = 'http://127.0.0.1:11434';
 const DEFAULT_MODEL = 'llama3.2:1b';
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 const MAX_RETRIES = 3;
@@ -145,53 +145,106 @@ export class OllamaClient extends EventEmitter {
    * Check if Ollama is available
    */
   async healthCheck() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout for health check
+
     try {
+      console.log(`[Ollama] Checking health at ${this.host}/api/tags...`);
       const response = await fetch(`${this.host}/api/tags`, {
         method: 'GET',
-        timeout: 5000
+        signal: controller.signal
       });
       
       if (!response.ok) {
-        return { available: false, error: 'Ollama not responding' };
+        return { available: false, error: 'Ollama not responding correctly' };
       }
       
       const data = await response.json();
       const models = data.models || [];
       const hasModel = models.some(m => m.name === this.model || m.name.startsWith(this.model));
       
+      console.log(`[Ollama] Health check result:`, { available: true, hasModel, modelCount: models.length });
+
       return {
         available: true,
         hasModel,
         models: models.map(m => m.name),
-        message: hasModel ? 'Ready' : `Model '${this.model}' not found. Run: ollama pull ${this.model}`
+        message: hasModel ? 'Ready' : `Model '${this.model}' not found.`
       };
     } catch (error) {
+      const isTimeout = error.name === 'AbortError';
+      const errorMsg = isTimeout ? 'Ollama connection timed out (3s)' : error.message;
+      console.error(`[Ollama] Health check failed: ${errorMsg}`);
+      
       return {
         available: false,
-        error: error.message,
-        message: 'Ollama not running. Start with: ollama serve'
+        error: errorMsg,
+        message: isTimeout ? 'Ollama is busy or not responding' : 'Ollama not running. Please start Ollama.'
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
   /**
-   * Pull a model
+   * Pull a model with streaming progress
    */
-  async pullModel(modelName = this.model) {
+  async pullModel(modelName = this.model, onProgress = () => {}) {
     this.emit('pull:start', { model: modelName });
+    onProgress({ status: 'Connecting to Ollama to request model pull...' });
     
     try {
       const response = await fetch(`${this.host}/api/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: modelName })
+        body: JSON.stringify({ name: modelName, stream: true })
       });
 
       if (!response.ok) {
-        throw new OllamaError('PULL_FAILED', `Failed to pull model: ${modelName}`);
+        throw new OllamaError('PULL_FAILED', `Failed to pull model: ${modelName}. Status: ${response.status}`);
       }
 
-      this.emit('pull:complete', { model: modelName });
+      onProgress({ status: 'Download stream established. Receiving data...' });
+
+      // Read the NDJSON stream
+      const reader = response.body;
+      let lastPercent = -1;
+
+      for await (const chunk of reader) {
+        const lines = chunk.toString().split('\n').filter(l => l.trim());
+        
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            
+            if (data.status === 'success') {
+              this.emit('pull:complete', { model: modelName });
+              return { success: true };
+            }
+
+            if (data.total && data.completed) {
+              const percent = Math.round((data.completed / data.total) * 100);
+              if (percent !== lastPercent) {
+                lastPercent = percent;
+                this.emit('pull:progress', { 
+                  model: modelName, 
+                  percent, 
+                  status: data.status,
+                  completed: data.completed,
+                  total: data.total
+                });
+                onProgress({ percent, status: data.status });
+              }
+            } else {
+              this.emit('pull:status', { status: data.status });
+              onProgress({ status: data.status });
+            }
+          } catch (e) {
+            // Skip partial/malformed JSON chunks
+          }
+        }
+      }
+
       return { success: true };
     } catch (error) {
       this.emit('pull:error', { model: modelName, error: error.message });
@@ -200,45 +253,81 @@ export class OllamaClient extends EventEmitter {
   }
 
   /**
-   * Generate a single response
+   * Generate a single response via Chat API (Streaming)
    */
-  async generate(prompt, options = {}) {
+  async chat(prompt, options = {}, onProgress = () => {}) {
     const systemPrompt = options.system || '';
-    const fullPrompt = systemPrompt 
-      ? `${systemPrompt}\n\n${prompt}` 
-      : prompt;
-
+    
     this.emit('generate:start', { prompt: prompt.slice(0, 100) + '...' });
+    onProgress({ status: 'AI is thinking and preparing code...' });
 
     try {
-      const response = await this._retryRequest('generate', {
-        model: options.model || this.model,
-        prompt: fullPrompt,
-        stream: false,
-        options: {
-          temperature: options.temperature ?? 0.7,
-          num_predict: options.maxTokens ?? 2048,
-          top_p: options.topP ?? 0.9,
-          ...options.params
+      const response = await fetch(`${this.host}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: options.model || this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+          ],
+          stream: true,
+          options: {
+            temperature: options.temperature ?? 0.3,
+            num_predict: options.maxTokens ?? 4096,
+            top_p: options.topP ?? 0.9,
+            ...options.params
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new OllamaError('GENERATE_FAILED', `Ollama generation failed: ${response.status}`);
+      }
+
+      const reader = response.body;
+      let fullContent = '';
+      let tokenCount = 0;
+
+      for await (const chunk of reader) {
+        const lines = chunk.toString().split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            
+            if (data.message && data.message.content) {
+              const content = data.message.content;
+              fullContent += content;
+              tokenCount++;
+              
+              // Periodic logging
+              if (tokenCount % 20 === 0) {
+                onProgress({ status: `AI is typing... (${tokenCount} tokens generated)` });
+              }
+            }
+
+            if (data.done) {
+              this._addToContext('user', prompt);
+              this._addToContext('assistant', fullContent);
+              
+              this.emit('generate:complete', { 
+                content: fullContent.slice(0, 100) + '...',
+                tokens: data.eval_count 
+              });
+
+              return {
+                content: fullContent,
+                tokens: data.eval_count,
+                totalDuration: data.total_duration
+              };
+            }
+          } catch (e) {
+            // Skip partial chunks
+          }
         }
-      });
+      }
 
-      const content = response.response || '';
-      
-      // Add to context
-      this._addToContext('user', prompt);
-      this._addToContext('assistant', content);
-      
-      this.emit('generate:complete', { 
-        content: content.slice(0, 100) + '...',
-        tokens: response.eval_count 
-      });
-
-      return {
-        content,
-        tokens: response.eval_count,
-        totalDuration: response.total_duration
-      };
+      return { content: fullContent, tokens: tokenCount };
     } catch (error) {
       this.emit('generate:error', { error: error.message });
       throw error;
@@ -248,7 +337,7 @@ export class OllamaClient extends EventEmitter {
   /**
    * Generate code for a specific file
    */
-  async generateFile(fileSpec, projectContext = {}, options = {}) {
+  async generateFile(fileSpec, projectContext = {}, options = {}, onProgress = () => {}) {
     const {
       path: filePath,
       description,
@@ -280,12 +369,12 @@ Description: ${description}${depsStr}${projectStr}
 ${contextStr ? `Previous context:\n${contextStr}\n\n` : ''}
 Provide only the code, wrapped in \`\`\`${language} blocks:`;
 
-    const result = await this.generate(prompt, {
+    const result = await this.chat(prompt, {
       system: systemPrompt,
       temperature: 0.3, // Lower temperature for code
       maxTokens: 4096,
       ...options
-    });
+    }, onProgress);
 
     return {
       path: filePath,
@@ -300,17 +389,26 @@ Provide only the code, wrapped in \`\`\`${language} blocks:`;
    */
   async generateProject(manifest, onProgress = () => {}) {
     const { name, description, files, techStack = {} } = manifest;
+    
+    if (!files || !Array.isArray(files)) {
+     throw new Error('CORRUPT_MANIFEST: No files found in manifest. It might still be encrypted or the cloud server is outdated.');
+    }
+
     const generatedFiles = [];
     const errors = [];
 
     this.emit('project:start', { name, fileCount: files.length });
-    onProgress({ phase: 'start', total: files.length, current: 0 });
+    onProgress({ phase: 'start', total: files.length, current: 0, message: `Starting generation: ${name} (${files.length} files)` });
 
     // Reset context for new project
+    onProgress({ phase: 'init', message: 'Resetting AI conversation context...' });
     this.contextWindow = [];
 
     // Add project context
+    onProgress({ phase: 'context', message: 'Feeding project specifications to the AI engine...' });
     this._addToContext('user', `Project: ${name}\nDescription: ${description}\nTech Stack: ${JSON.stringify(techStack)}`);
+
+    onProgress({ phase: 'ready', message: 'AI Engine context initialized. Starting file sequence...' });
 
     for (let i = 0; i < files.length; i++) {
       const fileSpec = files[i];
@@ -335,6 +433,15 @@ Provide only the code, wrapped in \`\`\`${language} blocks:`;
           description,
           techStack,
           generatedFiles: generatedFiles.map(f => ({ path: f.path, description: f.description }))
+        }, {}, (generationProgress) => {
+          onProgress({
+            phase: 'generating',
+            file: fileSpec.path,
+            current: i + 1,
+            total: files.length,
+            progress: ((i + (generationProgress.percent ? generationProgress.percent / 100 : 0)) / files.length) * 100,
+            message: generationProgress.status
+          });
         });
 
         generatedFiles.push(generated);

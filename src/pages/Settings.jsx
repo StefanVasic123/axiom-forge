@@ -146,7 +146,7 @@ function TokenInput({
 
 function Settings() {
   const { saveToken, checkTokens, tokensConfigured } = useAppStore();
-  const [ollamaHost, setOllamaHost] = useState('http://localhost:11434');
+  const [ollamaHost, setOllamaHost] = useState('http://127.0.0.1:11434');
   const [defaultModel, setDefaultModel] = useState('llama3.2:1b');
   const [ollamaStatus, setOllamaStatus] = useState('unknown');
   const [isTestingOllama, setIsTestingOllama] = useState(false);
@@ -235,7 +235,7 @@ function Settings() {
                 value={ollamaHost}
                 onChange={(e) => setOllamaHost(e.target.value)}
                 className="input flex-1"
-                placeholder="http://localhost:11434"
+                placeholder="http://127.0.0.1:11434"
               />
               <button
                 onClick={testOllamaConnection}

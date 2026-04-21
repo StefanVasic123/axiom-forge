@@ -13,6 +13,7 @@ import { DeploymentService } from './deploymentService.js';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
+import { spawn } from 'child_process';
 import { APP_CONFIG } from './config.js';
 
 // ==================== STATE DEFINITIONS ====================
@@ -81,11 +82,16 @@ export class TaskOrchestrator extends EventEmitter {
 
   async _fetchManifest(manifestId, token) {
     const apiUrl = APP_CONFIG.IDEA_ANALYZER_URL;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
     try {
+      console.log(`[Orchestrator] Fetching from: ${apiUrl}/api/axiom/manifest/${manifestId}`);
       const response = await fetch(`${apiUrl}/api/axiom/manifest/${manifestId}`, {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        signal: controller.signal
       });
       
       if (response.ok) {
@@ -97,11 +103,16 @@ export class TaskOrchestrator extends EventEmitter {
       const errTxt = await response.text();
       throw new Error(`Server response: ${response.status} - ${errTxt}`);
     } catch (error) {
-      console.error('[Orchestrator] Manifest fetch failed:', error);
+      const isTimeout = error.name === 'AbortError';
+      const msg = isTimeout ? 'Cloud connection timed out (15s)' : error.message;
+      
+      console.error('[Orchestrator] Manifest fetch failed:', msg);
       throw new OrchestratorError(
         'MANIFEST_FETCH_ERROR',
-        `Could not fetch manifest securely: ${error.message}`
+        `Could not fetch manifest: ${msg}`
       );
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -118,6 +129,40 @@ export class TaskOrchestrator extends EventEmitter {
     }
 
     return projectPath;
+  }
+
+  async _ensureOllama(onProgress) {
+    const health = await this.ollama.healthCheck();
+    if (health.available) return true;
+
+    console.log('[Orchestrator] Ollama not running. Attempting auto-start...');
+    onProgress({ 
+      phase: 'generate-files', 
+      message: 'Ollama engine is sleeping. Waking it up...',
+      progress: 10
+    });
+    
+    try {
+      const ollamaProcess = spawn('ollama', ['serve'], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      ollamaProcess.unref();
+      
+    // Wait for availability (max 10 seconds)
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const check = await this.ollama.healthCheck();
+      if (check.available) {
+        console.log('[Orchestrator] Ollama is reachable at 127.0.0.1.');
+        return true;
+      }
+    }
+    } catch (e) {
+      console.error('[Orchestrator] Failed to auto-start Ollama:', e);
+    }
+    
+    return false;
   }
 
   // ==================== PUBLIC API ====================
@@ -138,44 +183,120 @@ export class TaskOrchestrator extends EventEmitter {
       progress: 0,
       startTime: Date.now(),
       logs: [],
-      result: null,
+       result: null,
       error: null
     };
 
     this.activeTasks.set(taskId, task);
     this.emit('task:started', { taskId, type: 'generation' });
 
+    console.log(`[Orchestrator] Starting generation task: ${taskId} for project: ${projectId}`);
+
+    // Send immediate 1% progress to avoid "idle" 0% wait
+    onProgress({ 
+      phase: 'fetch-manifest', 
+      message: 'Initializing generation pipeline...', 
+      progress: 1 
+    });
+
     try {
       // Phase 1: Fetch Manifest
-      this._updateTask(taskId, { phase: TaskPhase.FETCH_MANIFEST });
-      onProgress({ phase: 'fetch-manifest', message: 'Fetching project manifest securely...' });
+      console.log(`[Orchestrator] Phase 1: Fetching manifest for ${manifestId}...`);
       
       const manifest = await this._fetchManifest(manifestId, token);
+      
+      // DEBUG: Log activity
+      try {
+        const fs = await import('fs');
+        fs.appendFileSync('C:\\Users\\StefanV\\Desktop\\Projects\\axiom-forge\\axiom-live-debug.log', `[${new Date().toISOString()}] Manifest fetched. Expecting clear text...\n`);
+        fs.writeFileSync('C:\\Users\\StefanV\\Desktop\\Projects\\axiom-forge\\axiom-live-manifest.json', JSON.stringify(manifest, null, 2));
+      } catch (e) {}
+
+      this._updateTask(taskId, { phase: TaskPhase.FETCH_MANIFEST, progress: 10 });
+      onProgress({ phase: 'fetch-manifest', message: 'Manifest secured and ready.', progress: 10 });
+      
+      process.stdout.write(`\n[DIAGNOSTIC] Manifest Audit: ${manifest?.name} | Files: ${manifest?.files?.length || 0} | Tech: ${JSON.stringify(manifest?.techStack?.framework)}\n`);
       task.logs.push({ time: Date.now(), message: `Fetched manifest: ${manifest.metadata?.name || manifestId}` });
 
       // Phase 2: Generate Files
+      console.log(`[Orchestrator] Phase 2: Checking local AI engine...`);
       this._updateTask(taskId, { phase: TaskPhase.GENERATE_FILES, progress: 10 });
-      onProgress({ phase: 'generate-files', message: 'Generating code with Ollama...' });
+      
+      // Auto-start or verify Ollama
+      const isOllamaReady = await this._ensureOllama(onProgress);
+      
+      if (!isOllamaReady) {
+        throw new OrchestratorError('OLLAMA_UNAVAILABLE', 'Ollama engine is not running and could not be started automatically.');
+      }
 
-      // Check Ollama health
+      onProgress({ 
+        phase: 'generate-files', 
+        message: 'Local AI engine ready.', 
+        progress: 15 
+      });
+
+      // Verify model - provide feedback before this potentially slow call
+      onProgress({ 
+        phase: 'generate-files', 
+        message: 'Checking if AI model (llama3.2:1b) is loaded...', 
+        progress: 17 
+      });
+      
       const health = await this.ollama.healthCheck();
-      if (!health.available) {
-        throw new OrchestratorError('OLLAMA_UNAVAILABLE', health.message);
+      
+      if (!health.hasModel) {
+        console.log(`[Orchestrator] Model missing. Starting pull...`);
+        onProgress({ 
+          phase: 'pull-model', 
+          message: `Model llama3.2:1b not found. Attempting download...`,
+          progress: 18
+        });
+        
+        await this.ollama.pullModel(this.ollama.model, (pullProgress) => {
+          const msg = pullProgress.percent 
+            ? `Downloading Model: ${pullProgress.percent}% - ${pullProgress.status}`
+            : `Model Status: ${pullProgress.status}`;
+          
+          // Allocate 5% of total progress bar to the pull phase
+          const pullContribution = (pullProgress.percent || 0) * 0.05;
+          const currentProgress = 18 + pullContribution;
+
+          this._updateTask(taskId, { progress: currentProgress });
+          onProgress({ 
+            phase: 'pull-model', 
+            message: msg,
+            progress: currentProgress
+          });
+        });
       }
 
-      if (!health.hasModel) {
-        onProgress({ phase: 'pull-model', message: `Pulling model: ${health.message}` });
-        await this.ollama.pullModel();
-      }
+      onProgress({ 
+        phase: 'generate-files', 
+        message: 'AI Model ready. Preparing instructions...', 
+        progress: 23 
+      });
 
       // Generate files
+      console.log(`[Orchestrator] Starting file generation...`);
+      // DEBUG: Log start of generation
+      try {
+        const fs = await import('fs');
+        fs.appendFileSync('C:\\Users\\StefanV\\Desktop\\Projects\\axiom-forge\\axiom-live-debug.log', `[${new Date().toISOString()}] TRIGGERING OLLAMA GENERATION: ${manifest.name} | Files: ${manifest.files?.length}\n`);
+      } catch (e) {}
+
       const generationResult = await this.ollama.generateProject(manifest, (progress) => {
-        const totalProgress = 10 + (progress.progress * 0.7);
-        this._updateTask(taskId, { progress: totalProgress });
-        onProgress({
-          ...progress,
-          message: `Generating ${progress.file}...`,
-          progress: totalProgress
+        // Safe progress calculation to avoid NaN
+        const subProgress = typeof progress.progress === 'number' ? progress.progress : 0;
+        const currentProgress = 25 + (subProgress * 0.7); 
+        
+        this._updateTask(taskId, { progress: currentProgress });
+        
+        onProgress({ 
+          ...progress, 
+          progress: currentProgress,
+          message: progress.message || (progress.phase === 'generating' 
+            ? `Generating: ${progress.file}` 
+            : `Project Phase: ${progress.phase}`)
         });
       });
 
@@ -194,7 +315,7 @@ export class TaskOrchestrator extends EventEmitter {
 
       // Phase 3: Save Project
       this._updateTask(taskId, { phase: TaskPhase.SAVE_PROJECT, progress: 80 });
-      onProgress({ phase: 'save-project', message: 'Saving project files...' });
+      onProgress({ phase: 'save-project', message: 'Saving project files...', progress: 80 });
 
       const projectPath = await this._saveProjectFiles(projectId, generationResult.files);
       
@@ -227,7 +348,7 @@ export class TaskOrchestrator extends EventEmitter {
       });
 
       this.emit('task:completed', { taskId, result: project });
-      onProgress({ phase: 'complete', message: 'Generation complete!', project });
+      onProgress({ phase: 'complete', message: 'Generation complete!', project, progress: 100 });
 
       return { taskId, project, generationResult };
 
@@ -452,6 +573,16 @@ export class TaskOrchestrator extends EventEmitter {
       logs: task.logs,
       error: task.error
     };
+  }
+
+  /**
+   * Get active task by project ID
+   */
+  getActiveTaskByProject(projectId) {
+    return Array.from(this.activeTasks.values()).find(task => 
+      task.projectId === projectId && 
+      ![TaskState.LIVE, TaskState.ERROR, TaskState.STOPPED].includes(task.state)
+    );
   }
 
   /**
