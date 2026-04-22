@@ -11,6 +11,8 @@ import { SecurityManager } from '../src/lib/security.js';
 import { TaskOrchestrator } from '../src/lib/taskOrchestrator.js';
 
 import { exec, spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import util from 'util';
 const execAsync = util.promisify(exec);
 
@@ -113,7 +115,7 @@ function createFloatingWindow(projectData = null) {
     }
   });
 
-  console.log('--- AXIOM FORGE DIAGNOSTICS [v1.1.9] ---');
+  console.log('--- AXIOM FORGE DIAGNOSTICS [v1.1.10] ---');
   console.log('[Main] Floating window created with size: 500x450');
   console.log('[Main] Current directory:', __dirname);
 
@@ -279,6 +281,12 @@ app.on('window-all-closed', () => {
   }
 });
 
+app.on('before-quit', () => {
+  console.log('[App] Shutting down Axiom Forge...');
+  // Force process exit after a short delay to allow cleanup
+  setTimeout(() => process.exit(0), 500);
+});
+
 // ==================== SECURE IPC HANDLERS ====================
 
 /**
@@ -337,13 +345,79 @@ ipcMain.handle('security:clear-all-tokens', async () => {
 /**
  * Project Management IPC
  */
-ipcMain.handle('project:get-all', async () => {
+ipcMain.handle('project:get-all', () => {
   try {
-    const projects = store.get('projects', []);
+    // 1. Load existing registered projects from store
+    let projects = store.get('projects', []);
+    const registeredIds = new Set(projects.map(p => p.id));
+
+    // 2. Scan disk for any projects not yet registered
+    const projectsDir = path.join(os.homedir(), '.axiom-forge', 'projects');
+    let diskFolders = [];
+    try {
+      diskFolders = fs.readdirSync(projectsDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+    } catch (e) {
+      // Directory doesn't exist yet — skip
+    }
+
+    for (const folderName of diskFolders) {
+      if (registeredIds.has(folderName)) continue;
+
+      // Try to read axiom-manifest.json for metadata
+      let meta = {};
+      try {
+        const manifestPath = path.join(projectsDir, folderName, 'axiom-manifest.json');
+        const raw = fs.readFileSync(manifestPath, 'utf-8');
+        meta = JSON.parse(raw);
+      } catch (e) {
+        // No manifest — use folder name as fallback
+      }
+
+      const newProject = {
+        id: folderName,
+        name: meta.name || folderName,
+        description: meta.description || 'Generated project',
+        status: 'ready',
+        path: path.join(projectsDir, folderName),
+        metadata: {
+          techStack: meta.techStack || {},
+          filesGenerated: meta.files?.length || 0,
+        },
+        createdAt: meta.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      projects.push(newProject);
+      registeredIds.add(folderName);
+      console.log(`[Project] Auto-discovered: ${folderName}`);
+    }
+
+    // 3. Migrate: fill in missing 'path' for already-registered projects
+    let needsSave = false;
+    projects = projects.map(p => {
+      if (!p.path) {
+        const expectedPath = path.join(projectsDir, p.id);
+        // Only set path if the folder actually exists
+        try {
+          fs.accessSync(expectedPath);
+          needsSave = true;
+          return { ...p, path: expectedPath };
+        } catch (e) {
+          // Folder not found — leave as is
+        }
+      }
+      return p;
+    });
+
+    // 4. Persist any newly discovered or migrated projects
+    store.set('projects', projects);
+
     return { success: true, projects };
   } catch (error) {
     console.error('[Project] Get all error:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, projects: [] };
   }
 });
 
@@ -417,7 +491,6 @@ ipcMain.handle('project:update-status', async (event, { id, status, metadata = {
  * Task Orchestrator IPC
  */
 ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, token }) => {
-  const fs = await import('fs');
   const logPath = 'C:\\Users\\StefanV\\Desktop\\Projects\\axiom-forge\\axiom-live-debug.log';
   const timestamp = new Date().toISOString();
   
@@ -432,6 +505,31 @@ ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, t
       // Send progress updates to renderer
       mainWindow?.webContents.send('task:progress', update);
       floatingWindow?.webContents.send('task:progress', update);
+
+      // AUTO-SAVE: If task is 100% complete, register it in the persistent store
+      if (update.progress === 100 && update.project) {
+        try {
+          const projects = store.get('projects', []);
+          const existingIndex = projects.findIndex(p => p.id === update.project.id);
+          
+          if (existingIndex >= 0) {
+            projects[existingIndex] = { ...projects[existingIndex], ...update.project, updatedAt: new Date().toISOString() };
+          } else {
+            projects.push({
+              ...update.project,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
+          
+          store.set('projects', projects);
+          console.log(`[Main] Auto-saved project: ${update.project.name} (${update.project.id})`);
+        } catch (saveError) {
+          console.error('[Main] Failed to auto-save project:', saveError);
+        }
+      }
+    }).catch(error => {
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
     }).catch(error => {
       fs.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
     });
@@ -440,6 +538,60 @@ ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, t
   } catch (error) {
     fs.appendFileSync(logPath, `[${new Date().toISOString()}] CRITICAL SETUP ERROR: ${error.message}\n`);
     return { success: false, error: error.message };
+  }
+});
+
+// Scan project folder on disk and return actual file list
+ipcMain.handle('project:get-files', (event, { projectId }) => {
+  try {
+    const projectDir = path.join(os.homedir(), '.axiom-forge', 'projects', projectId);
+    const result = [];
+
+    const scanDir = (dir, baseDir) => {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch (e) {
+        return;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        const relativePath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+        if (entry.isDirectory()) {
+          // Skip hidden and node_modules
+          if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            scanDir(fullPath, baseDir);
+          }
+        } else {
+          result.push({ path: relativePath, language: entry.name.split('.').pop() || 'txt' });
+        }
+      }
+    };
+
+    scanDir(projectDir, projectDir);
+    return { success: true, files: result };
+  } catch (error) {
+    console.error('[Project] Get files error:', error);
+    return { success: false, files: [], error: error.message };
+  }
+});
+
+// Read actual content of a specific file in a project
+ipcMain.handle('project:read-file', (event, { projectId, filePath }) => {
+  try {
+    const projectDir = path.join(os.homedir(), '.axiom-forge', 'projects', projectId);
+    const fullPath = path.join(projectDir, filePath);
+    
+    // Security: ensure path stays within project directory
+    if (!fullPath.startsWith(projectDir)) {
+      return { success: false, error: 'Access denied: path outside project directory' };
+    }
+    
+    const content = fs.readFileSync(fullPath, 'utf-8');
+    return { success: true, content };
+  } catch (error) {
+    console.error('[Project] Read file error:', error);
+    return { success: false, error: error.message, content: '' };
   }
 });
 
@@ -455,13 +607,55 @@ ipcMain.handle('task:configure-project', async (event, { projectId, envVars }) =
 
 ipcMain.handle('task:start-deployment', async (event, { projectId }) => {
   try {
+    // Clear old metadata before starting a fresh deploy
+    const projects = store.get('projects', []);
+    const idx = projects.findIndex(p => p.id === projectId);
+    if (idx >= 0) {
+      projects[idx].status = 'deploying';
+      projects[idx].metadata = {
+        ...projects[idx].metadata,
+        githubUrl: null,
+        deployUrl: null
+      };
+      store.set('projects', projects);
+    }
+
     const result = await taskOrchestrator.startDeployment(projectId, (update) => {
       mainWindow?.webContents.send('task:progress', update);
       floatingWindow?.webContents.send('task:progress', update);
     });
+
+    // Persist deploy results to store so UI shows GitHub/Vercel links
+    if (result?.github || result?.vercel) {
+      const projects = store.get('projects', []);
+      const idx = projects.findIndex(p => p.id === projectId);
+      if (idx >= 0) {
+        projects[idx].status = 'live';
+        projects[idx].metadata = {
+          ...projects[idx].metadata,
+          githubUrl: result.github?.repoUrl || null,
+          deployUrl: result.vercel?.url ? `https://${result.vercel.url}` : null,
+          repoName: result.github?.repoName || null
+        };
+        projects[idx].updatedAt = new Date().toISOString();
+        store.set('projects', projects);
+        console.log(`[Deploy] Project ${projectId} is now LIVE`);
+      }
+    }
+
     return { success: true, result };
   } catch (error) {
     console.error('[Task] Deployment error:', error);
+
+    // Mark as error in store
+    const projects = store.get('projects', []);
+    const idx = projects.findIndex(p => p.id === projectId);
+    if (idx >= 0) {
+      projects[idx].status = 'error';
+      projects[idx].updatedAt = new Date().toISOString();
+      store.set('projects', projects);
+    }
+
     return { success: false, error: error.message };
   }
 });

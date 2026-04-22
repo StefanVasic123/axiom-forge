@@ -13,37 +13,12 @@ export function useAppStore() {
   const checkFirstRun = useCallback(async () => {
     console.log('[Setup] Starting first run check...');
     try {
-      // Check if settings exist
-      const projectsResult = await window.electronAPI.project.getAll();
-      const projects = projectsResult.projects || [];
-      console.log('[Setup] Projects found:', projects.length);
-      
-      if (projects.length === 0) {
-        // Check if any tokens are configured
-        const githubResult = await window.electronAPI.security.hasToken('github-token');
-        const vercelResult = await window.electronAPI.security.hasToken('vercel-token');
-        
-        const hasAnyToken = githubResult.exists || vercelResult.exists;
-        console.log('[Setup] Tokens check:', { hasAnyToken, github: githubResult.exists, vercel: vercelResult.exists });
-        
-        // In addition to tokens, we MUST have Ollama and the model ready
-        const ollamaHealth = await window.electronAPI.ollama.checkHealth();
-        const isOllamaReady = ollamaHealth.available && ollamaHealth.hasModel;
-        console.log('[Setup] Ollama check:', ollamaHealth);
+      // Only check if Ollama is available — tokens are optional (configured in Settings)
+      const ollamaHealth = await window.electronAPI.ollama.checkHealth();
+      console.log('[Setup] Ollama check:', ollamaHealth);
 
-        if (!hasAnyToken || !isOllamaReady) {
-          console.log('[Setup] Forcing Wizard: tokens or ollama not ready.');
-          actions.setFirstRun(true);
-          return;
-        }
-      }
-      
-      // Even if we have projects/tokens, check Ollama health
-      const finalOllamaCheck = await window.electronAPI.ollama.checkHealth();
-      console.log('[Setup] Final health check:', finalOllamaCheck);
-      
-      if (!finalOllamaCheck.available || !finalOllamaCheck.hasModel) {
-        console.log('[Setup] Forcing Wizard: Final health check failed.');
+      if (!ollamaHealth.available || !ollamaHealth.hasModel) {
+        console.log('[Setup] Forcing Wizard: Ollama not ready.');
         actions.setFirstRun(true);
         return;
       }
@@ -52,7 +27,8 @@ export function useAppStore() {
       actions.setFirstRun(false);
     } catch (error) {
       console.error('[Setup] Error checking first run:', error);
-      actions.setFirstRun(true);
+      // On error, don't block the user — show the app
+      actions.setFirstRun(false);
     }
   }, [actions]);
 

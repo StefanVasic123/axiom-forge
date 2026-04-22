@@ -9,6 +9,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs/promises';
+import os from 'os';
+import { createHash } from 'crypto';
 
 const execAsync = promisify(exec);
 
@@ -77,8 +79,9 @@ export class DeploymentService {
     const { data: user } = await octokit.rest.users.getAuthenticated();
     const username = user.login;
     
-    // Generate repo name
-    const repoName = `axiom-forge-${projectId}`;
+    // Generate repo name — short, clean, GitHub-safe (max 100 chars)
+    const shortId = projectId.replace(/[^a-z0-9]/gi, '').slice(0, 8);
+    const repoName = `axiom-${shortId}`.toLowerCase();
     
     onProgress({ message: 'Creating repository...', progress: 20 });
     
@@ -111,8 +114,11 @@ export class DeploymentService {
       try {
         await fs.access(gitDir);
       } catch {
-        // Initialize git
+        // Initialize git and force 'main' as default branch
         await this._executeGitCommand(projectPath, 'git init');
+        await this._executeGitCommand(projectPath, 'git checkout -b main').catch(() =>
+          this._executeGitCommand(projectPath, 'git branch -M main')
+        );
       }
       
       onProgress({ message: 'Configuring git...', progress: 40 });
@@ -186,22 +192,24 @@ export class DeploymentService {
   // ==================== VERCEL OPERATIONS ====================
 
   /**
-   * Deploy to Vercel
+   * Deploy to Vercel via GitHub Integration (Best Practice)
    */
   async deployToVercel(projectId, repoName, onProgress = () => {}) {
     onProgress({ message: 'Initializing Vercel...', progress: 0 });
     
     const token = await this._initVercel();
     
-    // Get GitHub info
+    // Get GitHub info to form the full repo path (e.g. "username/reponame")
     const octokit = await this._initOctokit();
     const { data: user } = await octokit.rest.users.getAuthenticated();
     const githubRepo = `${user.login}/${repoName}`;
     
-    onProgress({ message: 'Creating Vercel project...', progress: 20 });
+    onProgress({ message: `Linking Vercel to GitHub: ${githubRepo}...`, progress: 20 });
     
+    const projectName = `axiom-${projectId.replace(/[^a-z0-9]/gi, '').slice(0, 8)}`.toLowerCase();
+
     try {
-      // Create project
+      // 1. Create or update Vercel project with Git connection
       const createResponse = await fetch('https://api.vercel.com/v9/projects', {
         method: 'POST',
         headers: {
@@ -209,8 +217,8 @@ export class DeploymentService {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          name: `axiom-forge-${projectId}`,
-          framework: null, // Auto-detect
+          name: projectName,
+          framework: null,
           gitRepository: {
             type: 'github',
             repo: githubRepo
@@ -218,17 +226,21 @@ export class DeploymentService {
         })
       });
       
+      let projectData = await createResponse.json();
+
       if (!createResponse.ok && createResponse.status !== 409) {
-        const error = await createResponse.text();
-        throw new DeploymentError('VERCEL_CREATE_FAILED', error);
+        // If it's a permission issue, give clear instructions
+        if (createResponse.status === 403 || projectData.error?.code === 'forbidden') {
+          throw new DeploymentError('VERCEL_GIT_FORBIDDEN', 
+            'Vercel cannot access your GitHub repo. Please ensure "Vercel for GitHub" is installed and has access to this repository at: https://vercel.com/dashboard/integrations/github'
+          );
+        }
+        throw new DeploymentError('VERCEL_PROJECT_FAILED', projectData.error?.message || 'Failed to create Vercel project');
       }
+
+      onProgress({ message: 'Triggering deployment from GitHub...', progress: 50 });
       
-      const project = createResponse.ok ? await createResponse.json() : null;
-      const projectName = project?.name || `axiom-forge-${projectId}`;
-      
-      onProgress({ message: 'Triggering deployment...', progress: 50 });
-      
-      // Trigger deployment
+      // 2. Trigger deployment from the main branch
       const deployResponse = await fetch('https://api.vercel.com/v13/deployments', {
         method: 'POST',
         headers: {
@@ -245,23 +257,23 @@ export class DeploymentService {
         })
       });
       
+      const deployment = await deployResponse.json();
+
       if (!deployResponse.ok) {
-        const error = await deployResponse.text();
-        throw new DeploymentError('VERCEL_DEPLOY_FAILED', error);
+        throw new DeploymentError('VERCEL_DEPLOY_FAILED', deployment.error?.message || 'Failed to trigger Vercel deployment');
       }
       
-      const deployment = await deployResponse.json();
-      
-      onProgress({ message: 'Waiting for deployment...', progress: 70 });
-      
-      // Poll for deployment status
-      let status = deployment.readyState;
       const deploymentId = deployment.id;
-      const maxAttempts = 30;
+
+      onProgress({ message: 'Vercel is building your site...', progress: 70 });
+      
+      // 3. Poll for deployment status
+      let status = deployment.readyState || 'QUEUED';
+      const maxAttempts = 60; // 2 minutes
       let attempts = 0;
       
       while (status !== 'READY' && status !== 'ERROR' && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         const statusResponse = await fetch(`https://api.vercel.com/v13/deployments/${deploymentId}`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -272,21 +284,22 @@ export class DeploymentService {
           status = statusData.readyState;
           
           const progress = 70 + ((attempts / maxAttempts) * 25);
-          onProgress({ message: `Deployment status: ${status}...`, progress });
+          onProgress({ message: `Build status: ${status}...`, progress });
         }
         
         attempts++;
       }
       
       if (status === 'ERROR') {
-        throw new DeploymentError('VERCEL_DEPLOY_ERROR', 'Deployment failed');
+        throw new DeploymentError('VERCEL_BUILD_ERROR', 'Vercel build failed. Check Vercel dashboard for logs.');
       }
       
+      const liveUrl = deployment.url ? `https://${deployment.url}` : null;
       onProgress({ message: 'Deployment complete!', progress: 100 });
       
       return {
         success: true,
-        url: deployment.url ? `https://${deployment.url}` : null,
+        url: liveUrl,
         id: deploymentId,
         status
       };

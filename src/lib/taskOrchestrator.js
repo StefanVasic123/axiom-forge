@@ -347,10 +347,28 @@ export class TaskOrchestrator extends EventEmitter {
         result: { project, generationResult }
       });
 
-      this.emit('task:completed', { taskId, result: project });
-      onProgress({ phase: 'complete', message: 'Generation complete!', project, progress: 100 });
+      const finalProject = {
+        id: projectId,
+        name: manifest.name || 'Unnamed Project',
+        description: manifest.description || '',
+        status: TaskState.READY,
+        metadata: {
+          ...manifest.meta,
+          filesGenerated: manifest.files?.length || 0,
+          techStack: manifest.techStack
+        },
+        updatedAt: new Date().toISOString()
+      };
 
-      return { taskId, project, generationResult };
+      this.emit('task:completed', { taskId, result: finalProject });
+      onProgress({ 
+        phase: 'complete', 
+        message: 'Generation complete! Project is ready.', 
+        project: finalProject, 
+        progress: 100 
+      });
+
+      return { taskId, project: finalProject, generationResult };
 
     } catch (error) {
       this._updateTask(taskId, { 

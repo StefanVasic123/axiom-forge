@@ -166,22 +166,26 @@ export function AppProvider({ children }) {
     dispatch({ type: ACTIONS.SET_TOKENS_CONFIGURED, payload: tokens });
   }, []);
 
-  const value = {
-    state,
-    actions: {
-      setFirstRun,
-      setLoading,
-      setError,
-      setProjects,
-      addProject,
-      updateProject,
-      deleteProject,
-      setCurrentProject,
-      setTaskProgress,
-      updateSettings,
-      setTokensConfigured
-    }
-  };
+  const actions = React.useMemo(() => ({
+    setFirstRun,
+    setLoading,
+    setError,
+    setProjects,
+    addProject,
+    updateProject,
+    deleteProject,
+    setCurrentProject,
+    setTaskProgress,
+    updateSettings,
+    setTokensConfigured
+  }), [
+    setFirstRun, setLoading, setError, setProjects,
+    addProject, updateProject, deleteProject,
+    setCurrentProject, setTaskProgress, updateSettings,
+    setTokensConfigured
+  ]);
+
+  const value = React.useMemo(() => ({ state, actions }), [state, actions]);
 
   return (
     <AppContext.Provider value={value}>

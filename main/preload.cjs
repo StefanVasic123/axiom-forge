@@ -22,6 +22,8 @@ const securityAPI = {
 const projectAPI = {
   getAll: () => ipcRenderer.invoke('project:get-all'),
   get: (id) => ipcRenderer.invoke('project:get', { id }),
+  getFiles: (projectId) => ipcRenderer.invoke('project:get-files', { projectId }),
+  readFile: (projectId, filePath) => ipcRenderer.invoke('project:read-file', { projectId, filePath }),
   save: (projectData) => ipcRenderer.invoke('project:save', projectData),
   delete: (id) => ipcRenderer.invoke('project:delete', { id }),
   updateStatus: (id, status, metadata = {}) => 

@@ -125,12 +125,25 @@ function StatusBadge({ status }) {
 function ProjectDetail() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { projects, loadProjects, removeProject, updateProjectStatus, startDeployment } = useAppStore();
+  const { 
+    projects, 
+    loadProjects, 
+    removeProject, 
+    updateProjectStatus, 
+    startDeployment,
+    taskProgress 
+  } = useAppStore();
   
   const [project, setProject] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [deployMessage, setDeployMessage] = useState(null);
   const [fileContent, setFileContent] = useState('');
+  const [diskFiles, setDiskFiles] = useState([]);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  // Find active task for this project
+  const activeTask = Object.values(taskProgress).find(t => t.projectId === projectId);
 
   useEffect(() => {
     loadProjects();
@@ -140,15 +153,28 @@ function ProjectDetail() {
     const found = projects.find(p => p.id === projectId);
     if (found) {
       setProject(found);
+      // Load real files from disk
+      setIsLoadingFiles(true);
+      window.electronAPI.project.getFiles(projectId)
+        .then(result => {
+          if (result.success) setDiskFiles(result.files);
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingFiles(false));
     }
   }, [projectId, projects]);
 
   const handleDeploy = async () => {
     setIsDeploying(true);
+    setDeployMessage(null);
     try {
-      await startDeployment(projectId);
+      const result = await startDeployment(projectId);
+      if (result?.success) {
+        setDeployMessage({ type: 'success', text: 'Deployment started! Check GitHub and Vercel for progress.' });
+      }
     } catch (error) {
       console.error('Deployment failed:', error);
+      setDeployMessage({ type: 'error', text: `Deploy failed: ${error.message}` });
     } finally {
       setIsDeploying(false);
     }
@@ -163,10 +189,17 @@ function ProjectDetail() {
 
   const handleFileSelect = async (file) => {
     setSelectedFile(file);
-    
-    // In a real implementation, this would read the file content
-    // For now, we'll show a placeholder
-    setFileContent(`// ${file.path}\n// File content would be loaded here...`);
+    setFileContent('Loading...');
+    try {
+      const result = await window.electronAPI.project.readFile(projectId, file.path);
+      if (result.success) {
+        setFileContent(result.content);
+      } else {
+        setFileContent(`// Could not read file: ${result.error}`);
+      }
+    } catch (e) {
+      setFileContent(`// ${file.path}\n// (File preview not available)`);
+    }
   };
 
   if (!project) {
@@ -211,11 +244,11 @@ function ProjectDetail() {
             </Link>
           )}
           
-          {project.status === 'ready' && (
+          {(project.status === 'ready' || project.status === 'error') && (
             <button
               onClick={handleDeploy}
               disabled={isDeploying}
-              className="btn-primary"
+              className={project.status === 'error' ? 'btn-danger' : 'btn-primary'}
             >
               {isDeploying ? (
                 <>
@@ -225,7 +258,7 @@ function ProjectDetail() {
               ) : (
                 <>
                   <Play className="w-4 h-4" />
-                  Deploy
+                  {project.status === 'error' ? 'Retry Deploy' : 'Deploy'}
                 </>
               )}
             </button>
@@ -273,25 +306,64 @@ function ProjectDetail() {
         <p className="text-slate-400">{project.description}</p>
       )}
 
+      {/* Deployment Progress */}
+      {isDeploying && (
+        <div className="card p-6 bg-slate-800/50 border-indigo-500/30 animate-pulse-subtle">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-white flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+              Deployment in Progress
+            </h3>
+            <span className="text-sm font-medium text-indigo-400">
+              {Math.round(activeTask?.progress || 0)}%
+            </span>
+          </div>
+          
+          <div className="w-full bg-slate-900 rounded-full h-2 mb-4 overflow-hidden">
+            <div 
+              className="bg-indigo-500 h-full transition-all duration-500 ease-out"
+              style={{ width: `${activeTask?.progress || 0}%` }}
+            />
+          </div>
+          
+          <p className="text-sm text-slate-400 italic">
+            {activeTask?.message || 'Initializing deployment sequence...'}
+          </p>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* File Explorer */}
-        <div className="lg:col-span-1">
-          <div className="card p-4">
-            <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-              <Folder className="w-4 h-4" />
-              Files
-            </h3>
-            {project.files && project.files.length > 0 ? (
-              <FileTree 
-                files={project.files} 
-                onSelect={handleFileSelect}
-              />
-            ) : (
-              <p className="text-sm text-slate-500">No files generated yet</p>
-            )}
+          {deployMessage && (
+            <div className={`mt-3 p-3 rounded-lg text-sm ${
+              deployMessage.type === 'success' 
+                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
+            }`}>
+              {deployMessage.text}
+            </div>
+          )}
+
+          {/* File Explorer */}
+          <div className="lg:col-span-1">
+            <div className="card p-4">
+              <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
+                <Folder className="w-4 h-4" />
+                Files
+                {isLoadingFiles && <Loader2 className="w-3 h-3 animate-spin text-slate-500 ml-1" />}
+              </h3>
+              {isLoadingFiles ? (
+                <p className="text-sm text-slate-500">Scanning project files...</p>
+              ) : diskFiles.length > 0 ? (
+                <FileTree 
+                  files={diskFiles} 
+                  onSelect={handleFileSelect}
+                />
+              ) : (
+                <p className="text-sm text-slate-500">No files found on disk</p>
+              )}
+            </div>
           </div>
-        </div>
 
         {/* File Preview */}
         <div className="lg:col-span-2">

@@ -30,6 +30,7 @@ function TokenInput({
   const [value, setValue] = useState('');
   const [showValue, setShowValue] = useState(false);
   const [isSet, setIsSet] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
@@ -38,8 +39,16 @@ function TokenInput({
   }, []);
 
   const checkToken = async () => {
-    const result = await window.electronAPI.security.hasToken(tokenKey);
-    setIsSet(result.exists);
+    setIsChecking(true);
+    try {
+      const result = await window.electronAPI.security.hasToken(tokenKey);
+      setIsSet(result?.exists === true);
+    } catch (e) {
+      console.error(`[Settings] Could not check token ${tokenKey}:`, e);
+      setIsSet(false);
+    } finally {
+      setIsChecking(false);
+    }
   };
 
   const handleSave = async () => {
@@ -61,9 +70,34 @@ function TokenInput({
   };
 
   const handleClear = async () => {
-    await window.electronAPI.security.deleteToken(tokenKey);
-    setIsSet(false);
-    setMessage({ type: 'success', text: 'Token cleared' });
+    try {
+      await window.electronAPI.security.deleteToken(tokenKey);
+      setIsSet(false);
+      setValue('');
+      setMessage({ type: 'success', text: 'Token cleared' });
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Could not clear token' });
+    }
+  };
+
+  const handleReveal = async () => {
+    if (showValue && value) {
+      // Hide it again
+      setValue('');
+      setShowValue(false);
+      return;
+    }
+    try {
+      const result = await window.electronAPI.security.getToken(tokenKey);
+      if (result.success && result.value) {
+        setValue(result.value);
+        setShowValue(true);
+      } else {
+        setMessage({ type: 'error', text: 'Could not retrieve token value' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Failed to reveal token' });
+    }
   };
 
   return (
@@ -72,7 +106,13 @@ function TokenInput({
         <label className="label flex items-center gap-2">
           <Key className="w-4 h-4 text-slate-500" />
           {label}
-          {isSet && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+          {isChecking ? (
+            <RefreshCw className="w-3 h-3 text-slate-500 animate-spin" />
+          ) : isSet ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-amber-400" />
+          )}
         </label>
         
         {helpUrl && (
@@ -93,6 +133,13 @@ function TokenInput({
       {description && (
         <p className="text-xs text-slate-500">{description}</p>
       )}
+
+      {isSet && !value && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span className="text-xs text-emerald-400">Token is configured. Enter a new value below to replace it.</span>
+        </div>
+      )}
       
       <div className="flex gap-2">
         <div className="relative flex-1">
@@ -104,8 +151,9 @@ function TokenInput({
             className="input pr-10"
           />
           <button
-            onClick={() => setShowValue(!showValue)}
+            onClick={handleReveal}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+            title={showValue && value ? 'Hide token' : 'Reveal stored token'}
           >
             {showValue ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
@@ -335,7 +383,7 @@ function Settings() {
             </p>
           </div>
           <div className="text-right">
-            <p className="text-sm text-slate-400">Version 1.0.0</p>
+            <p className="text-sm text-slate-400 font-mono">Version 1.1.9</p>
             <a
               href="https://github.com/axiom-forge/axiom-forge"
               onClick={(e) => {
