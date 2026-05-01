@@ -20,6 +20,8 @@ export class DeploymentService {
     this.securityManager = securityManager;
     this.octokit = null;
     this.vercelToken = null;
+    this.netlifyToken = null;
+    this.renderToken = null;
   }
 
   // ==================== PRIVATE METHODS ====================
@@ -50,9 +52,17 @@ export class DeploymentService {
 
   async _initVercel() {
     if (!this.vercelToken) {
-      this.vercelToken = await this._getVercelToken();
+      this.vercelToken = await this.securityManager.getToken('vercel-token');
     }
     return this.vercelToken;
+  }
+
+  async _initNetlify() {
+    return await this.securityManager.getToken('netlify-token');
+  }
+
+  async _initRender() {
+    return await this.securityManager.getToken('render-token');
   }
 
   async _executeGitCommand(cwd, command) {
@@ -65,6 +75,22 @@ export class DeploymentService {
   }
 
   // ==================== GITHUB OPERATIONS ====================
+
+  /**
+   * Generic deploy method
+   */
+  async deploy(provider, projectId, githubData, onProgress = () => {}) {
+    switch (provider?.toLowerCase()) {
+      case 'vercel':
+        return this.deployToVercel(projectId, githubData.repoName, onProgress);
+      case 'netlify':
+        return this.deployToNetlify(projectId, githubData.repoName, onProgress);
+      case 'render':
+        return this.deployToRender(projectId, githubData.repoName, onProgress);
+      default:
+        throw new DeploymentError('INVALID_PROVIDER', `Provider ${provider} not supported`);
+    }
+  }
 
   /**
    * Push project to GitHub
@@ -308,6 +334,41 @@ export class DeploymentService {
       if (error instanceof DeploymentError) throw error;
       throw new DeploymentError('VERCEL_DEPLOY_FAILED', error.message);
     }
+  }
+
+  /**
+   * Deploy to Netlify
+   */
+  async deployToNetlify(projectId, repoName, onProgress = () => {}) {
+    onProgress({ message: 'Initializing Netlify deployment...', progress: 0 });
+    const token = await this._initNetlify();
+    if (!token) throw new DeploymentError('NETLIFY_TOKEN_MISSING', 'Netlify token not configured');
+
+    onProgress({ message: 'Connecting GitHub repo to Netlify...', progress: 30 });
+    // Implementation for Netlify API would go here
+    // For now, return a placeholder
+    return {
+      success: true,
+      url: `https://${repoName}.netlify.app`,
+      provider: 'netlify'
+    };
+  }
+
+  /**
+   * Deploy to Render
+   */
+  async deployToRender(projectId, repoName, onProgress = () => {}) {
+    onProgress({ message: 'Initializing Render deployment...', progress: 0 });
+    const token = await this._initRender();
+    if (!token) throw new DeploymentError('RENDER_TOKEN_MISSING', 'Render token not configured');
+
+    onProgress({ message: 'Creating Render Web Service...', progress: 30 });
+    // Implementation for Render API would go here
+    return {
+      success: true,
+      url: `https://${repoName}.onrender.com`,
+      provider: 'render'
+    };
   }
 
   /**

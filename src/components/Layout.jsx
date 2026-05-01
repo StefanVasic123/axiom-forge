@@ -11,7 +11,8 @@ import {
   Plus, 
   Github, 
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Brain
 } from 'lucide-react';
 import { useAppStore } from '../hooks/useAppStore';
 
@@ -30,6 +31,7 @@ function Sidebar() {
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/ai-optimizer', icon: Brain, label: 'AI Optimizer' },
     { path: '/settings', icon: Settings, label: 'Settings' }
   ];
 

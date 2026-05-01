@@ -27,7 +27,11 @@ const projectAPI = {
   save: (projectData) => ipcRenderer.invoke('project:save', projectData),
   delete: (id) => ipcRenderer.invoke('project:delete', { id }),
   updateStatus: (id, status, metadata = {}) => 
-    ipcRenderer.invoke('project:update-status', { id, status, metadata })
+    ipcRenderer.invoke('project:update-status', { id, status, metadata }),
+  commit: (projectId, message) =>
+    ipcRenderer.invoke('project:commit', { projectId, message }),
+  pushToGitHub: (projectId) =>
+    ipcRenderer.invoke('project:push-to-github', { projectId })
 };
 
 // ==================== TASK ORCHESTRATOR API ====================
@@ -110,6 +114,43 @@ const appAPI = {
   getPath: (name) => ipcRenderer.invoke('app:get-path', name)
 };
 
+// ==================== EDITOR API ====================
+const editorAPI = {
+  writeFile: (projectId, filePath, content) =>
+    ipcRenderer.invoke('editor:write-file', { projectId, filePath, content }),
+  aiEdit: (filePath, fileContent, prompt, featureContext) =>
+    ipcRenderer.invoke('editor:ai-edit', { filePath, fileContent, prompt, featureContext }),
+  gitCommit: (projectId, message) =>
+    ipcRenderer.invoke('project:commit', { projectId, message }),
+  onAiChunk: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('editor:ai-chunk', handler);
+    return () => ipcRenderer.removeListener('editor:ai-chunk', handler);
+  },
+  onAiDirective: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('editor:ai-directive', handler);
+    return () => ipcRenderer.removeListener('editor:ai-directive', handler);
+  }
+};
+
+// ==================== SERVER API ====================
+const serverAPI = {
+  start: (options) => ipcRenderer.invoke('server:start', options),
+  stop: () => ipcRenderer.invoke('server:stop'),
+  getStatus: (projectId) => ipcRenderer.invoke('server:status', projectId),
+  onLog: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('server:log', handler);
+    return () => ipcRenderer.removeListener('server:log', handler);
+  },
+  onStatus: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('server:status', handler);
+    return () => ipcRenderer.removeListener('server:status', handler);
+  }
+};
+
 // ==================== EXPOSE APIs TO RENDERER ====================
 contextBridge.exposeInMainWorld('electronAPI', {
   security: securityAPI,
@@ -120,7 +161,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deepLink: deepLinkAPI,
   shell: shellAPI,
   dialog: dialogAPI,
-  app: appAPI
+  app: appAPI,
+  editor: editorAPI,
+  server: serverAPI
 });
 
 console.log('[Preload] Axiom Forge secure API initialized (.cjs)');

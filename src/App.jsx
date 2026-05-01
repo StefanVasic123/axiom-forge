@@ -13,6 +13,8 @@ import Dashboard from './pages/Dashboard';
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import ProjectConfig from './pages/ProjectConfig';
+import EditorPage from './pages/Editor';
+import AiOptimizer from './pages/AiOptimizer';
 import { useAppStore } from './hooks/useAppStore';
 
 function AppContent() {
@@ -43,13 +45,20 @@ function AppContent() {
       {isFirstRun ? (
         <Route path="*" element={<InstallationWizard />} />
       ) : (
-        <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/projects/:projectId" element={<ProjectDetail />} />
-          <Route path="/projects/:projectId/config" element={<ProjectConfig />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
+        <>
+          {/* Full-screen routes (no Layout) */}
+          <Route path="/projects/:projectId/editor" element={<EditorPage />} />
+
+          {/* Standard routes (with Layout) */}
+          <Route element={<Layout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/projects/:projectId" element={<ProjectDetail />} />
+            <Route path="/projects/:projectId/config" element={<ProjectConfig />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/ai-optimizer" element={<AiOptimizer />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </>
       )}
     </Routes>
   );

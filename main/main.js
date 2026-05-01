@@ -9,9 +9,14 @@ import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 import { SecurityManager } from '../src/lib/security.js';
 import { TaskOrchestrator } from '../src/lib/taskOrchestrator.js';
+import { DevServerManager } from '../src/lib/devServerManager.js';
+import { IKFirewallCore } from '@ik-firewall/core';
+
+process.env.IK_DESKTOP_FREE_MODE = 'true'; // Protect local usage from web telemetry
 
 import { exec, spawn } from 'child_process';
-import fs from 'fs';
+import fsSync from 'fs';
+const fs = fsSync.promises;
 import os from 'os';
 import util from 'util';
 const execAsync = util.promisify(exec);
@@ -30,6 +35,9 @@ const securityManager = new SecurityManager(store);
 
 // Task orchestrator for state machine
 const taskOrchestrator = new TaskOrchestrator(securityManager);
+
+// Local Dev Server Manager
+const devServerManager = new DevServerManager();
 
 // Window references
 let mainWindow = null;
@@ -76,6 +84,14 @@ function createMainWindow() {
       deepLinkQueue.forEach(url => handleDeepLink(url));
       deepLinkQueue = [];
     }
+
+    // Connect DevServerManager logs to MainWindow
+    devServerManager.onLog(({ text, type, status }) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (text) mainWindow.webContents.send('server:log', { text, type });
+        if (status) mainWindow.webContents.send('server:status', { status });
+      }
+    });
   });
 
   mainWindow.on('closed', () => {
@@ -115,7 +131,7 @@ function createFloatingWindow(projectData = null) {
     }
   });
 
-  console.log('--- AXIOM FORGE DIAGNOSTICS [v1.1.10] ---');
+  console.log('--- AXIOM FORGE DIAGNOSTICS [v1.1.12] ---');
   console.log('[Main] Floating window created with size: 500x450');
   console.log('[Main] Current directory:', __dirname);
 
@@ -355,7 +371,7 @@ ipcMain.handle('project:get-all', () => {
     const projectsDir = path.join(os.homedir(), '.axiom-forge', 'projects');
     let diskFolders = [];
     try {
-      diskFolders = fs.readdirSync(projectsDir, { withFileTypes: true })
+      diskFolders = fsSync.readdirSync(projectsDir, { withFileTypes: true })
         .filter(d => d.isDirectory())
         .map(d => d.name);
     } catch (e) {
@@ -369,7 +385,7 @@ ipcMain.handle('project:get-all', () => {
       let meta = {};
       try {
         const manifestPath = path.join(projectsDir, folderName, 'axiom-manifest.json');
-        const raw = fs.readFileSync(manifestPath, 'utf-8');
+        const raw = fsSync.readFileSync(manifestPath, 'utf-8');
         meta = JSON.parse(raw);
       } catch (e) {
         // No manifest — use folder name as fallback
@@ -401,7 +417,7 @@ ipcMain.handle('project:get-all', () => {
         const expectedPath = path.join(projectsDir, p.id);
         // Only set path if the folder actually exists
         try {
-          fs.accessSync(expectedPath);
+          fsSync.accessSync(expectedPath);
           needsSave = true;
           return { ...p, path: expectedPath };
         } catch (e) {
@@ -428,6 +444,70 @@ ipcMain.handle('project:get', async (event, { id }) => {
     return { success: true, project };
   } catch (error) {
     console.error('[Project] Get error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Commit current state of a project to local git
+ipcMain.handle('project:commit', async (event, { projectId, message }) => {
+  try {
+    const projects = store.get('projects', []);
+    const project = projects.find(p => p.id === projectId);
+    const projectPath = project?.path || path.join(os.homedir(), '.axiom-forge', 'projects', projectId);
+
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const run = (cmd) => execAsync(cmd, { cwd: projectPath });
+
+    // Ensure git is initialized
+    const gitDir = path.join(projectPath, '.git');
+    try {
+      await fs.access(gitDir);
+    } catch {
+      await run('git init');
+      await run('git checkout -b main').catch(() => run('git branch -M main'));
+      await run('git config user.email "axiom-forge@localhost"');
+      await run('git config user.name "Axiom Forge"');
+    }
+
+    await run('git add .');
+    const commitMsg = message || `Axiom Forge checkpoint — ${new Date().toLocaleString()}`;
+    
+    try {
+      await run(`git commit -m "${commitMsg.replace(/"/g, "'")}"`);
+      console.log(`[Git] Committed: ${commitMsg}`);
+      return { success: true, message: commitMsg };
+    } catch (e) {
+      // Nothing to commit
+      return { success: true, message: 'Nothing new to commit.' };
+    }
+  } catch (error) {
+    console.error('[Project] Commit error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Push local commits to GitHub (without triggering Vercel redeploy)
+ipcMain.handle('project:push-to-github', async (event, { projectId }) => {
+  try {
+    const result = await taskOrchestrator.pushToGitHub(projectId, (update) => {
+      mainWindow?.webContents.send('task:progress', update);
+    });
+    
+    // Update store with github URL
+    if (result?.repoUrl) {
+      const projects = store.get('projects', []);
+      const idx = projects.findIndex(p => p.id === projectId);
+      if (idx >= 0) {
+        projects[idx].metadata = { ...projects[idx].metadata, githubUrl: result.repoUrl };
+        store.set('projects', projects);
+      }
+    }
+    
+    return { success: true, ...result };
+  } catch (error) {
+    console.error('[Project] Push to GitHub error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -488,6 +568,266 @@ ipcMain.handle('project:update-status', async (event, { id, status, metadata = {
 });
 
 /**
+ * Editor IPC
+ */
+
+// Write a file to disk (used by Monaco Editor Ctrl+S)
+ipcMain.handle('editor:write-file', async (event, { projectId, filePath, content }) => {
+  try {
+    const projects = store.get('projects', []);
+    const project = projects.find(p => p.id === projectId);
+    const projectPath = project?.path || path.join(os.homedir(), '.axiom-forge', 'projects', projectId);
+    const fullPath = path.join(projectPath, filePath);
+
+    // Safety: ensure path is within project directory
+    if (!fullPath.startsWith(projectPath)) {
+      return { success: false, error: 'Path traversal detected' };
+    }
+
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.writeFile(fullPath, content, 'utf-8');
+    console.log(`[Editor] Wrote file: ${filePath}`);
+    return { success: true };
+  } catch (error) {
+    console.error('[Editor] Write file error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ----------------------------------------------------------------------------
+// IK FIREWALL INIT (For AI Editor & Optimizer Dashboard)
+// ----------------------------------------------------------------------------
+const ik = IKFirewallCore.getInstance({
+  providerMode: 'local',
+  localAuditEndpoint: 'http://127.0.0.1:11434',
+  safeMode: true
+}, {
+  onStatus: (msg) => {
+    console.log(`[IK_STATUS] ${msg}`);
+    if (mainWindow) mainWindow.webContents.send('ik:status', msg);
+  },
+  onAuditComplete: (metrics) => {
+    if (mainWindow) mainWindow.webContents.send('ik:audit', metrics);
+  },
+  onDNAChange: (dna) => {
+    if (mainWindow) mainWindow.webContents.send('ik:dna', dna);
+  }
+});
+
+// Store for Custom Directives
+const appStore = new Store();
+
+// IPC handleri za AI Optimizer Dashboard postavke
+ipcMain.handle('ik:get-config', () => ik.getConfig());
+ipcMain.handle('ik:set-config', (event, newConfig) => {
+  ik.setConfig(newConfig);
+  return { success: true };
+});
+
+// Perzistentno čuvanje Custom Direktiva na disku
+ipcMain.handle('ik:get-custom-directive', () => {
+  return appStore.get('axiom_custom_directives', '');
+});
+ipcMain.handle('ik:set-custom-directive', (event, text) => {
+  appStore.set('axiom_custom_directives', text);
+  return { success: true };
+});
+
+// AI code editing via local Ollama (With IK Firewall)
+ipcMain.handle('editor:ai-edit', async (event, { filePath, fileContent, prompt, featureContext, visualContext }) => {
+  try {
+    // 1. Učitavamo sačuvanu direktivu iz baze/fajla i spajamo sa axiom-features.json
+    const customDirective = appStore.get('axiom_custom_directives', '');
+    let contextStr = featureContext ? `FEATURE_CONTEXT (axiom-features.json):\n${featureContext}\n` : '';
+    if (customDirective) {
+      contextStr += `USER_CUSTOM_DIRECTIVES:\n${customDirective}\n`;
+    }
+    
+    const configOverride = contextStr ? { customContext: contextStr } : {};
+
+    // 2. AUDIT FAZA: Šaljemo Pitanje u Firewall (Brzi LLM poziv)
+    ik.hooks?.onStatus?.("🔥 Započinjem Audit Fazu...");
+    const metrics = await ik.analyzeAIAssisted(prompt, undefined, 'professional', undefined, configOverride);
+    
+    // 3. CRYSTALLIZE: Kompresujemo KORISNIČKI ZAHTEV (ne kod!)
+    const optimizedPrompt = ik.crystallize(prompt, metrics);
+    
+    // --- MULTI-AGENT PIPELINE ---
+    
+    // STAGE 1: MULTI-FACET ANALYZER
+    ik.hooks?.onStatus?.("🔍 Faza 1: Analiziram funkcionalni opseg i simbole...");
+    const scopePrompt = `Identify the line ranges AND the functional symbols (functions/classes/interfaces) relevant to this request: "${optimizedPrompt}".
+Output ONLY a JSON object: {"ranges": [{"start": 1, "end": 10}], "symbols": ["Login", "handleSubmit"]}. No other text.`;
+    
+    const analysisResponse = await fetch('http://127.0.0.1:11434/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.2:1b',
+        messages: [{ role: 'user', content: analysisPrompt + "\n\nCODE:\n" + fileContent }],
+        stream: false
+      })
+    });
+    const scopeData = await analysisResponse.json();
+    const scopeJson = scopeData.message?.content || "{}";
+    console.log("[MAIN] Identified Scope:", scopeJson);
+
+    let ranges = [];
+    let symbols = [];
+    try {
+      const parsed = JSON.parse(scopeJson.match(/\{.*\}/s)[0]);
+      ranges = parsed.ranges || [];
+      symbols = parsed.symbols || [];
+    } catch (e) {
+      console.warn("[MAIN] Failed to parse scope JSON.");
+    }
+
+    if (ranges.length === 0) {
+      ranges = [{ start: 1, end: fileContent.split('\n').length }];
+    }
+
+    const { start: startLine, end: endLine } = ranges[0];
+    const originalLines = fileContent.split('\n');
+    const windowSnippet = originalLines.slice(Math.max(0, startLine - 1), endLine).join('\n');
+
+    // STAGE 2: CONTEXT-AWARE ARCHITECT
+    ik.hooks?.onStatus?.("🎨 Faza 2: Arhitekta dizajnira rešenje uz vizuelni kontekst...");
+    const visualInfo = visualContext ? `VISUAL_CONTEXT (Element Clicked):\n- Component: ${visualContext.component || 'Unknown'}\n- Tag: ${visualContext.tag}\n- Classes: ${visualContext.classes}\n- Text: ${visualContext.text}\n` : '';
+    
+    const solutionPrompt = `${visualInfo}
+RELEVANT SYMBOLS: ${symbols.join(', ')}
+
+ORIGINAL CODE:
+${windowSnippet}
+
+TASK: ${optimizedPrompt}
+
+Generate the exact logical changes needed. Output ONLY the new code. No markdown.`;
+
+    const solutionResponse = await fetch('http://127.0.0.1:11434/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.2:1b',
+        messages: [{ role: 'user', content: solutionPrompt }],
+        stream: false
+      })
+    });
+    const solutionData = await solutionResponse.json();
+    const proposedSolution = solutionData.message?.content || "";
+    console.log("[MAIN] Proposed Solution:", proposedSolution.substring(0, 100) + "...");
+
+    // STAGE 3: PRECISION INTEGRATION (Integrator)
+    ik.hooks?.onStatus?.("🚀 Faza 3: Vršim preciznu integraciju u originalni kod...");
+    const integratorSystemPrompt = metrics.agentDirective || "You are a code integrator. Return ONLY the final integrated code snippet.";
+    
+    const integratorUserMessage = `ORIGINAL SNIPPET:
+${windowSnippet}
+
+PROPOSED SOLUTION:
+${proposedSolution}
+
+Integrate the PROPOSED SOLUTION into the ORIGINAL SNIPPET perfectly. 
+Keep all surrounding logic, imports, and structure. 
+Output ONLY the final integrated code for this specific block (lines ${startLine}-${endLine}).`;
+
+    // 5. Šaljemo direktivu Frontend-u
+    console.log("[MAIN] Sending ai-directive to renderer...");
+    try {
+      event.sender.send('editor:ai-directive', { 
+        directive: metrics.agentDirective || "You are a code editor. Output ONLY code.",
+        optimizedPrompt: optimizedPrompt,
+        scope: scope
+      });
+    } catch (err) {
+      console.error("[MAIN] Error sending directive:", err);
+    }
+
+    ik.hooks?.onStatus?.("🚀 Izvršavam Code Edit...");
+    
+    const response = await fetch('http://127.0.0.1:11434/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama3.2:1b',
+        messages: [
+          { role: 'system', content: integratorSystemPrompt },
+          { role: 'user', content: integratorUserMessage }
+        ],
+        stream: true,
+        options: { temperature: 0.1, num_predict: 2048 }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama error: ${response.status}`);
+    }
+
+    // Čitamo stream (postojeća logika za streaming tokena)
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullRawContent = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; 
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line);
+          if (data.message?.content) {
+            fullRawContent += data.message.content;
+            try {
+              event.sender.send('editor:ai-chunk', { token: data.message.content });
+            } catch (e) {
+              // Ignore send error
+            }
+          }
+        } catch (e) {
+          // Ignore parse error
+        }
+      }
+    }
+
+    let newContent = fullRawContent;
+
+    // --- STAGE 3: APPLY (Programmatic Window Injection) ---
+    if (rangeMatch && fullRawContent.length > 0) {
+      console.log(`[MAIN] Injecting modified snippet back into lines ${startLine}-${endLine}`);
+      const lines = fileContent.split('\n');
+      
+      // Clean the LLM output (remove markdown fences if any)
+      let cleanedSnippet = fullRawContent.replace(/^```[\w]*\n/m, '').replace(/\n```$/m, '').trim();
+      
+      const before = lines.slice(0, startLine - 1);
+      const after = lines.slice(endLine);
+      
+      newContent = [...before, cleanedSnippet, ...after].join('\n');
+    } else {
+      // Fallback: cleaning
+      newContent = newContent.replace(/^[\s\S]*?```[\w]*\n?/m, '').replace(/\n?```[\s\S]*?$/m, '').trim();
+    }
+
+    console.log(`[MAIN] Final processed content length: ${newContent.length}`);
+    ik.hooks?.onStatus?.("✅ Kod uspešno izmenjen!");
+    return { success: true, newContent: newContent || fullRawContent };
+
+    console.log(`[MAIN] Final processed content length: ${newContent.length}`);
+    ik.hooks?.onStatus?.("✅ Kod uspešno izmenjen!");
+    return { success: true, newContent: newContent || fullRawContent };
+  } catch (error) {
+    console.error('[Editor] AI edit error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+/**
  * Task Orchestrator IPC
  */
 ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, token }) => {
@@ -495,12 +835,12 @@ ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, t
   const timestamp = new Date().toISOString();
   
   try {
-    fs.appendFileSync(logPath, `\n[${timestamp}] --- NEW TASK RECEIVED ---\n`);
-    fs.appendFileSync(logPath, `[${timestamp}] ManifestId: ${manifestId} | ProjectId: ${projectId}\n`);
+    fsSync.appendFileSync(logPath, `\n[${timestamp}] --- NEW TASK RECEIVED ---\n`);
+    fsSync.appendFileSync(logPath, `[${timestamp}] ManifestId: ${manifestId} | ProjectId: ${projectId}\n`);
     
     // Start generation asynchronously
     taskOrchestrator.startGeneration(manifestId, projectId, token, (update) => {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] PROGRESS ${update.progress}%: ${update.phase} - ${update.message}\n`);
+      fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] PROGRESS ${update.progress}%: ${update.phase} - ${update.message}\n`);
       
       // Send progress updates to renderer
       mainWindow?.webContents.send('task:progress', update);
@@ -529,14 +869,14 @@ ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, t
         }
       }
     }).catch(error => {
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
+    fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
     }).catch(error => {
-      fs.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
+      fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] ERROR: ${error.message}\nSTACK: ${error.stack}\n`);
     });
     
     return { success: true, message: 'Generation task dispatched' };
   } catch (error) {
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] CRITICAL SETUP ERROR: ${error.message}\n`);
+    fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] CRITICAL SETUP ERROR: ${error.message}\n`);
     return { success: false, error: error.message };
   }
 });
@@ -550,7 +890,7 @@ ipcMain.handle('project:get-files', (event, { projectId }) => {
     const scanDir = (dir, baseDir) => {
       let entries;
       try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
+        entries = fsSync.readdirSync(dir, { withFileTypes: true });
       } catch (e) {
         return;
       }
@@ -587,7 +927,7 @@ ipcMain.handle('project:read-file', (event, { projectId, filePath }) => {
       return { success: false, error: 'Access denied: path outside project directory' };
     }
     
-    const content = fs.readFileSync(fullPath, 'utf-8');
+    const content = fsSync.readFileSync(fullPath, 'utf-8');
     return { success: true, content };
   } catch (error) {
     console.error('[Project] Read file error:', error);
@@ -829,6 +1169,33 @@ ipcMain.handle('app:get-path', (event, name) => {
     console.error('[App] Get path error:', error);
     return { success: false, error: error.message };
   }
+});
+
+// ==================== LOCAL SERVER CONTROL ====================
+
+ipcMain.handle('server:start', async (event, { projectId, platform, techStack }) => {
+  try {
+    const projectsDir = path.join(os.homedir(), 'AxiomProjects');
+    const projectPath = path.join(projectsDir, projectId);
+    
+    devServerManager.start(projectId, projectPath, platform, techStack);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('server:stop', async () => {
+  try {
+    devServerManager.stop();
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('server:status', async (event, projectId) => {
+  return { isRunning: devServerManager.isRunning(projectId) };
 });
 
 // Handle certificate errors

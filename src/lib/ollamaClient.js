@@ -345,6 +345,17 @@ export class OllamaClient extends EventEmitter {
       dependencies = []
     } = fileSpec;
 
+    const platform = projectContext.platform || 'web';
+    
+    let platformInstructions = '';
+    if (platform === 'mobile') {
+      platformInstructions = '- You are building a Mobile app (React Native / Expo).\n- Use React Native core components (View, Text, StyleSheet) instead of HTML tags.\n- Avoid web-only APIs (window, document).';
+    } else if (platform === 'desktop') {
+      platformInstructions = '- You are building a Desktop app (Electron).\n- Use Node.js integration cautiously.\n- Ensure IPC boundaries are respected if requested.';
+    } else {
+      platformInstructions = '- You are building a Web application.\n- Ensure responsive design and accessible HTML.';
+    }
+
     const systemPrompt = `You are an expert software engineer. Generate clean, production-ready code.
 Follow these guidelines:
 - Write only the code, no explanations
@@ -352,6 +363,7 @@ Follow these guidelines:
 - Include necessary imports
 - Add JSDoc comments for functions
 - Handle errors appropriately
+${platformInstructions}
 - Follow the existing code style if context is provided`;
 
     const contextStr = this._buildContext();
@@ -430,6 +442,7 @@ Provide only the code, wrapped in \`\`\`${language} blocks:`;
       try {
         const generated = await this.generateFile(fileSpec, {
           projectName: name,
+          platform: manifest.platform || 'web',
           description,
           techStack,
           generatedFiles: generatedFiles.map(f => ({ path: f.path, description: f.description }))

@@ -274,11 +274,15 @@ function ProjectConfig() {
       // Save to secure storage
       await configureProject(projectId, allVars);
       
-      // Update project status
-      await updateProjectStatus(projectId, 'ready', {
+      // Update project status and metadata
+      const updatedMetadata = {
+        ...project.metadata,
         configuredAt: new Date().toISOString(),
-        envVarCount: Object.keys(allVars).length
-      });
+        envVarCount: Object.keys(allVars).length,
+        deployment: project.metadata?.deployment // This now contains the selected provider
+      };
+
+      await updateProjectStatus(projectId, 'ready', updatedMetadata);
 
       setSaveSuccess(true);
       
@@ -341,6 +345,40 @@ function ProjectConfig() {
               They are only used during deployment and never sent to our servers.
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* Hosting Provider */}
+      <div className="card p-6">
+        <h2 className="text-lg font-semibold text-white mb-4">Hosting Provider</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { id: 'vercel', name: 'Vercel', icon: <Globe className="w-4 h-4" /> },
+            { id: 'netlify', name: 'Netlify', icon: <ExternalLink className="w-4 h-4" /> },
+            { id: 'render', name: 'Render', icon: <Server className="w-4 h-4" /> },
+            { id: 'hostinger', name: 'Hostinger', icon: <Shield className="w-4 h-4" /> }
+          ].map((prov) => (
+            <button
+              key={prov.id}
+              onClick={() => {
+                setProject(prev => ({
+                  ...prev,
+                  metadata: {
+                    ...prev.metadata,
+                    deployment: { ...prev.metadata?.deployment, provider: prov.id }
+                  }
+                }));
+              }}
+              className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all gap-2 ${
+                project.metadata?.deployment?.provider === prov.id
+                  ? 'bg-emerald-600/20 border-emerald-500 text-emerald-400'
+                  : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              {prov.icon}
+              <span className="text-xs font-bold">{prov.name}</span>
+            </button>
+          ))}
         </div>
       </div>
 

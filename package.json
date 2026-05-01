@@ -1,6 +1,6 @@
 {
   "name": "axiom-forge",
-  "version": "1.1.10",
+  "version": "1.1.12",
   "description": "Open-source local agent for the idea-to-app pipeline",
   "main": "main/main.js",
   "type": "module",
@@ -26,17 +26,21 @@
   "author": "Axiom Forge Community",
   "license": "MIT",
   "dependencies": {
+    "@ik-firewall/core": "^2.6.6",
+    "@monaco-editor/react": "^4.7.0",
     "@octokit/rest": "^21.0.2",
+    "crypto-js": "^4.2.0",
     "electron-store": "^10.0.0",
     "electron-updater": "^6.3.0",
     "lucide-react": "^0.460.0",
+    "monaco-editor": "^0.55.1",
+    "node-fetch": "^3.3.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
     "vercel": "^39.0.0",
-    "zustand": "^5.0.0",
-    "node-fetch": "^3.3.2",
-    "crypto-js": "^4.2.0"
+    "vite-plugin-monaco-editor": "^1.1.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
@@ -72,7 +76,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ]
     },
@@ -80,7 +87,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -88,14 +97,18 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "protocols": [
       {
         "name": "Axiom Forge Protocol",
-        "schemes": ["axiom"]
+        "schemes": [
+          "axiom"
+        ]
       }
     ]
   },

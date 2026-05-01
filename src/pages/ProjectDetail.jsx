@@ -137,6 +137,7 @@ function ProjectDetail() {
   const [project, setProject] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isCommitting, setIsCommitting] = useState(false);
   const [deployMessage, setDeployMessage] = useState(null);
   const [fileContent, setFileContent] = useState('');
   const [diskFiles, setDiskFiles] = useState([]);
@@ -171,12 +172,35 @@ function ProjectDetail() {
       const result = await startDeployment(projectId);
       if (result?.success) {
         setDeployMessage({ type: 'success', text: 'Deployment started! Check GitHub and Vercel for progress.' });
+        loadProjects();
       }
     } catch (error) {
       console.error('Deployment failed:', error);
       setDeployMessage({ type: 'error', text: `Deploy failed: ${error.message}` });
     } finally {
       setIsDeploying(false);
+    }
+  };
+
+  const handleCommitToGitHub = async () => {
+    setDeployMessage(null);
+    setIsCommitting(true);
+    try {
+      // 1. Local commit
+      const commitMsg = `Axiom Forge — ${new Date().toLocaleString()}`;
+      await window.electronAPI.project.commit(projectId, commitMsg);
+      // 2. Push to GitHub (no Vercel)
+      const result = await window.electronAPI.project.pushToGitHub(projectId);
+      if (result.success) {
+        setDeployMessage({ type: 'success', text: `✅ Committed & pushed to GitHub${result.repoUrl ? ` → ${result.repoUrl}` : ''}` });
+        loadProjects();
+      } else {
+        setDeployMessage({ type: 'error', text: `Push failed: ${result.error}` });
+      }
+    } catch (error) {
+      setDeployMessage({ type: 'error', text: `Commit failed: ${error.message}` });
+    } finally {
+      setIsCommitting(false);
     }
   };
 
@@ -234,6 +258,16 @@ function ProjectDetail() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Open Editor — always available */}
+          <button
+            onClick={() => navigate(`/projects/${projectId}/editor`)}
+            className="btn-secondary"
+            title="Open AI-powered code editor"
+          >
+            <Code2 className="w-4 h-4" />
+            Open Editor
+          </button>
+
           {project.status === 'awaiting-keys' && (
             <Link
               to={`/projects/${projectId}/config`}
@@ -260,6 +294,21 @@ function ProjectDetail() {
                   <Play className="w-4 h-4" />
                   {project.status === 'error' ? 'Retry Deploy' : 'Deploy'}
                 </>
+              )}
+            </button>
+          )}
+
+          {(project.status === 'ready' || project.status === 'error' || project.status === 'live') && (
+            <button
+              onClick={handleCommitToGitHub}
+              disabled={isCommitting || isDeploying}
+              className="btn-secondary"
+              title="Commit & push to GitHub without redeploying to Vercel"
+            >
+              {isCommitting ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />Committing...</>
+              ) : (
+                <><Github className="w-4 h-4" />Commit to GitHub</>
               )}
             </button>
           )}

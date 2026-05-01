@@ -257,6 +257,35 @@ function Settings() {
             description="Required for deploying to Vercel"
             onSave={saveToken}
           />
+
+          <hr className="border-slate-800" />
+
+          <TokenInput
+            label="Netlify Token"
+            tokenKey="netlify-token"
+            helpUrl="https://app.netlify.com/user/settings/applications#personal-access-tokens"
+            description="Required for deploying to Netlify"
+            onSave={saveToken}
+          />
+
+          <hr className="border-slate-800" />
+
+          <TokenInput
+            label="Render Token"
+            tokenKey="render-token"
+            helpUrl="https://dashboard.render.com/u/settings#api-keys"
+            description="Required for deploying to Render"
+            onSave={saveToken}
+          />
+
+          <hr className="border-slate-800" />
+
+          <TokenInput
+            label="Hostinger Token/SSH"
+            tokenKey="hostinger-token"
+            description="Required for custom deployments via SSH/FTP to Hostinger"
+            onSave={saveToken}
+          />
         </div>
       </section>
 

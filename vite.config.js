@@ -4,6 +4,7 @@
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import monacoEditorPlugin from 'vite-plugin-monaco-editor';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,7 +12,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    monacoEditorPlugin.default({
+      languageWorkers: ['editorWorkerService', 'typescript', 'json', 'css', 'html']
+    })
+  ],
   
   // Base path for production build
   base: './',
@@ -45,8 +51,8 @@ export default defineConfig({
       }
     },
     
-    // Chunk size warning
-    chunkSizeWarningLimit: 1000
+    // Chunk size warning — Monaco chunks are large
+    chunkSizeWarningLimit: 3000
   },
   
   // Development server

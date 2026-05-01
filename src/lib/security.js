@@ -33,7 +33,10 @@ const ALLOWED_TOKEN_KEYS = new Set([
   'stripe-publishable-key',
   'openai-api-key',
   'anthropic-api-key',
-  'ollama-host'
+  'ollama-host',
+  'netlify-token',
+  'render-token',
+  'hostinger-token'
 ]);
 
 // ==================== SECURITY MANAGER CLASS ====================
