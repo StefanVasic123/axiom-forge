@@ -31,7 +31,7 @@ const initialState = {
   // Tokens status
   tokensConfigured: {
     github: false,
-    vercel: false
+    hosting: false
   }
 };
 

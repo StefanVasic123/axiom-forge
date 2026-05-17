@@ -307,8 +307,9 @@ export class OllamaClient extends EventEmitter {
             }
 
             if (data.done) {
-              this._addToContext('user', prompt);
-              this._addToContext('assistant', fullContent);
+              // [Zero-Memory Optimization] We no longer save history to context window.
+              // this._addToContext('user', prompt);
+              // this._addToContext('assistant', fullContent);
               
               this.emit('generate:complete', { 
                 content: fullContent.slice(0, 100) + '...',
@@ -366,12 +367,31 @@ Follow these guidelines:
 ${platformInstructions}
 - Follow the existing code style if context is provided`;
 
-    const contextStr = this._buildContext();
+    // [Dependency-Aware Architecture] Build context ONLY from internal dependencies
+    let contextStr = '';
+    if (fileSpec.internalDependencies && fileSpec.internalDependencies.length > 0) {
+      const depsCode = fileSpec.internalDependencies
+        .map(depPath => {
+           const found = projectContext.generatedFiles?.find(f => f.path === depPath);
+           return found ? `// --- FILE: ${found.path} ---\n${found.content}` : null;
+        })
+        .filter(Boolean)
+        .join('\n\n');
+        
+      if (depsCode) {
+         contextStr = `CODE OF INTERNAL DEPENDENCIES YOU MUST USE/IMPORT:\n${depsCode}\n\n`;
+      }
+    }
+
     const depsStr = dependencies.length > 0 
       ? `\nDependencies: ${dependencies.join(', ')}` 
       : '';
     const projectStr = Object.keys(projectContext).length > 0
-      ? `\nProject Context:\n${JSON.stringify(projectContext, null, 2)}`
+      ? `\nProject Context:\n${JSON.stringify({
+          projectName: projectContext.projectName,
+          platform: projectContext.platform,
+          techStack: projectContext.techStack
+        }, null, 2)}`
       : '';
 
     const prompt = `Generate ${language} code for file: ${filePath}
@@ -445,7 +465,7 @@ Provide only the code, wrapped in \`\`\`${language} blocks:`;
           platform: manifest.platform || 'web',
           description,
           techStack,
-          generatedFiles: generatedFiles.map(f => ({ path: f.path, description: f.description }))
+          generatedFiles: generatedFiles.map(f => ({ path: f.path, description: f.description, content: f.content }))
         }, {}, (generationProgress) => {
           onProgress({
             phase: 'generating',
@@ -554,6 +574,37 @@ Format as JSON array:`;
     if (options.maxContextLength) this.maxContextLength = options.maxContextLength;
     
     this.emit('configured', { host: this.host, model: this.model });
+  }
+
+  /**
+   * Programmatically unload a model from Ollama's memory
+   */
+  async unloadModel(modelName) {
+    try {
+      console.log(`[Ollama] Programmatically unloading model '${modelName}'...`);
+      const body = {
+        model: modelName,
+        prompt: '',
+        keep_alive: 0
+      };
+      
+      const res = await fetch(`${this.host}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body)
+      });
+      
+      if (res.ok) {
+        console.log(`[Ollama] Model '${modelName}' successfully unloaded.`);
+        return { success: true };
+      }
+      throw new Error(`Failed to unload model, HTTP status: ${res.status}`);
+    } catch (error) {
+      console.error(`[Ollama] Failed to unload model: ${error.message}`);
+      throw error;
+    }
   }
 }
 

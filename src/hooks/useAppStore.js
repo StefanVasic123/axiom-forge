@@ -13,12 +13,23 @@ export function useAppStore() {
   const checkFirstRun = useCallback(async () => {
     console.log('[Setup] Starting first run check...');
     try {
-      // Only check if Ollama is available — tokens are optional (configured in Settings)
+      // 1. Check if user has explicitly selected a model via the new Setup Wizard
+      const selectedModel = await window.electronAPI.hardware.getSelectedModel();
+      if (!selectedModel) {
+        console.log('[Setup] Forcing Wizard: No model selected in hardware config.');
+        actions.setFirstRun(true);
+        return;
+      }
+
+      // 2. Check if Ollama is available and running
       const ollamaHealth = await window.electronAPI.ollama.checkHealth();
       console.log('[Setup] Ollama check:', ollamaHealth);
 
-      if (!ollamaHealth.available || !ollamaHealth.hasModel) {
-        console.log('[Setup] Forcing Wizard: Ollama not ready.');
+      // Check if the explicitly selected model is actually installed
+      const hasRequiredModel = (ollamaHealth.models || []).some(m => m === selectedModel || m.startsWith(selectedModel));
+
+      if (!ollamaHealth.available || !hasRequiredModel) {
+        console.log(`[Setup] Forcing Wizard: Ollama not ready or selected model (${selectedModel}) missing.`);
         actions.setFirstRun(true);
         return;
       }
@@ -99,19 +110,20 @@ export function useAppStore() {
   // ==================== TOKEN OPERATIONS ====================
   const checkTokens = useCallback(async () => {
     try {
-      const [githubResult, vercelResult] = await Promise.all([
-        window.electronAPI.security.hasToken('github-token'),
-        window.electronAPI.security.hasToken('vercel-token')
-      ]);
+      const githubToken = await window.electronAPI.security.getToken('github-token');
+      const vercelToken = await window.electronAPI.security.getToken('vercel-token');
+      const hostingerToken = await window.electronAPI.security.getToken('hostinger-token');
 
       actions.setTokensConfigured({
-        github: githubResult.exists,
-        vercel: vercelResult.exists
+        github: !!githubToken,
+        vercel: !!vercelToken,
+        hosting: !!vercelToken || !!hostingerToken
       });
 
       return {
-        github: githubResult.exists,
-        vercel: vercelResult.exists
+        github: !!githubToken,
+        vercel: !!vercelToken,
+        hosting: !!vercelToken || !!hostingerToken
       };
     } catch (error) {
       console.error('Error checking tokens:', error);
@@ -135,6 +147,18 @@ export function useAppStore() {
   // ==================== TASK OPERATIONS ====================
   const startGeneration = useCallback(async (manifestId, projectId, token) => {
     try {
+      // JIT Memory Swap: Unload Editor Model before running Builder Model
+      try {
+        const editorModel = await window.electronAPI.hardware.getEditorModel();
+        const builderModel = await window.electronAPI.hardware.getBuilderModel();
+        if (editorModel && builderModel && editorModel !== builderModel) {
+          console.log(`[JIT Swapper] Unloading Editor model '${editorModel}' before starting generation...`);
+          await window.electronAPI.ollama.unloadModel(editorModel);
+        }
+      } catch (err) {
+        console.warn('[JIT Swapper] Failed to run JIT unload on editor model:', err);
+      }
+
       // Show floating window
       await window.electronAPI.window.showFloating({ id: projectId });
       
@@ -207,13 +231,27 @@ export function useAppStore() {
       unsubscribeConfig();
       unsubscribeDeploy();
     };
-  }, []);
+  }, [startGeneration]);
 
   // ==================== TASK PROGRESS ====================
   useEffect(() => {
-    const unsubscribe = window.electronAPI.task.onProgress((data) => {
+    const unsubscribe = window.electronAPI.task.onProgress(async (data) => {
       if (data.taskId) {
         actions.setTaskProgress(data.taskId, data);
+
+        // Auto-unload Builder Model upon completion (success, error, or stopped) to free VRAM/RAM
+        const isComplete = data.progress === 100 || data.phase === 'complete' || data.state === 'error' || data.state === 'stopped';
+        if (isComplete) {
+          try {
+            const builderModel = await window.electronAPI.hardware.getBuilderModel();
+            if (builderModel) {
+              console.log(`[Auto-Clean] Generation finished. Programmatically unloading Builder model '${builderModel}'...`);
+              await window.electronAPI.ollama.unloadModel(builderModel);
+            }
+          } catch (err) {
+            console.warn('[Auto-Clean] Failed to unload builder model:', err);
+          }
+        }
       }
     });
 

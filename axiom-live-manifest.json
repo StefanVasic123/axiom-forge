@@ -1,213 +1,258 @@
 {
-  "name": "Tool Verification Platform",
+  "name": "My Desktop App",
   "files": [
     {
-      "path": "src/components/auth/Login.tsx",
-      "language": "typescript",
-      "description": "This file should implement the user login functionality using NextAuth. It should include a form for user credentials, handle form submission, and manage authentication state. Ensure to provide feedback for successful or failed login attempts and connect to the authentication API routes.",
-      "dependencies": [
-        "next-auth",
-        "react-hook-form"
-      ]
+      "path": "main/database/schema.sql",
+      "language": "sql",
+      "description": "Define the SQL schema for the SQLite database in this file. This should include all necessary tables, fields, and relationships required for the application to function correctly.",
+      "dependencies": [],
+      "internalDependencies": []
     },
     {
-      "path": "src/components/auth/Register.tsx",
-      "language": "typescript",
-      "description": "This file should handle user registration, including a form for user details. It should validate input fields, submit the data to the backend for user creation, and manage the registration state. Provide appropriate user feedback for success or errors.",
-      "dependencies": [
-        "next-auth",
-        "react-hook-form"
-      ]
-    },
-    {
-      "path": "src/dashboard/UserDashboard.tsx",
-      "language": "typescript",
-      "description": "This file should render the user dashboard, displaying user profile information and submitted tools. It should fetch data from the backend API, handle loading states, and provide options for users to manage their submissions. Ensure to implement error handling for API calls.",
-      "dependencies": [
-        "axios",
-        "react-query"
-      ]
-    },
-    {
-      "path": "src/tools/ToolDetail.tsx",
-      "language": "typescript",
-      "description": "This file should display detailed information about a specific tool, including its verification status. It should fetch data from the tools API based on the tool ID passed as a prop. Implement loading and error states, and provide a user-friendly interface for viewing tool details.",
-      "dependencies": [
-        "axios",
-        "react-query"
-      ]
-    },
-    {
-      "path": "src/admin/AdminPanel.tsx",
-      "language": "typescript",
-      "description": "This file should provide the admin interface for reviewing user submissions. It should fetch all submissions from the admin API, display them in a manageable format, and allow admins to approve or reject submissions. Include error handling for API interactions.",
-      "dependencies": [
-        "axios",
-        "react-query"
-      ]
-    },
-    {
-      "path": "src/api/auth/index.ts",
-      "language": "typescript",
-      "description": "This file should define the API routes for user authentication, including login and registration endpoints. Implement necessary middleware for session management and error handling. Ensure to validate incoming requests and provide appropriate responses.",
-      "dependencies": [
-        "next-auth",
-        "express"
-      ]
-    },
-    {
-      "path": "src/api/tools/index.ts",
-      "language": "typescript",
-      "description": "This file should define the API routes for fetching and submitting tools. Implement CRUD operations, ensuring to validate data and handle errors. Connect to the database using Prisma for data management.",
-      "dependencies": [
-        "prisma",
-        "express"
-      ]
-    },
-    {
-      "path": "src/api/admin/index.ts",
-      "language": "typescript",
-      "description": "This file should define the API routes for admin functionalities, including fetching all submissions and verifying tools. Implement necessary authentication checks and error handling. Ensure to connect to the database for data retrieval.",
-      "dependencies": [
-        "prisma",
-        "express"
-      ]
-    },
-    {
-      "path": "src/middleware/errorHandler.ts",
-      "language": "typescript",
-      "description": "This file should implement centralized error handling middleware for the application. It should catch errors from API routes and provide standardized error responses. Ensure to log errors for monitoring purposes.",
-      "dependencies": [
-        "winston"
-      ]
-    },
-    {
-      "path": "src/lib/prisma.ts",
-      "language": "typescript",
-      "description": "This file should initialize the Prisma client for database interactions. Ensure to handle connection errors and export the client for use in API routes. Include necessary configurations for connecting to the PostgreSQL database.",
-      "dependencies": [
-        "prisma"
-      ]
-    },
-    {
-      "path": "src/styles/globals.css",
-      "language": "css",
-      "description": "This file should contain global CSS styles for the application. Define base styles, typography, and layout settings to ensure a consistent look and feel across all components.",
-      "dependencies": []
-    },
-    {
-      "path": "src/styles/theme.css",
-      "language": "css",
-      "description": "This file should define theme-specific styles, including color schemes and component variations. Ensure to use CSS variables for easy theme management and customization.",
-      "dependencies": []
-    },
-    {
-      "path": "src/hooks/useAuth.ts",
-      "language": "typescript",
-      "description": "This file should implement a custom React hook for managing authentication state. It should provide functions for logging in, logging out, and checking the current user's authentication status. Ensure to handle session management effectively.",
-      "dependencies": [
-        "next-auth/react"
-      ]
-    },
-    {
-      "path": "src/context/AuthContext.tsx",
-      "language": "typescript",
-      "description": "This file should create a context provider for managing authentication state across the application. It should wrap the application in the provider and expose authentication state and functions to child components.",
-      "dependencies": [
-        "react"
-      ]
-    },
-    {
-      "path": "src/types/user.ts",
-      "language": "typescript",
-      "description": "This file should define TypeScript types for user-related data structures, including user profiles and authentication tokens. Ensure to include necessary fields for user management.",
-      "dependencies": []
-    },
-    {
-      "path": "src/types/tool.ts",
-      "language": "typescript",
-      "description": "This file should define TypeScript types for tool-related data structures, including tool details and verification statuses. Ensure to include necessary fields for managing tools.",
-      "dependencies": []
-    },
-    {
-      "path": "src/types/admin.ts",
-      "language": "typescript",
-      "description": "This file should define TypeScript types for admin-related data structures, including submission reviews and admin actions. Ensure to include necessary fields for managing admin functionalities.",
-      "dependencies": []
-    },
-    {
-      "path": "src/tests/unit/Login.test.tsx",
-      "language": "typescript",
-      "description": "This file should contain unit tests for the Login component. Ensure to test various scenarios, including successful login, failed login, and form validation. Use Jest and React Testing Library for testing.",
-      "dependencies": [
-        "jest",
-        "react-testing-library"
-      ]
-    },
-    {
-      "path": "src/tests/integration/UserDashboard.test.tsx",
-      "language": "typescript",
-      "description": "This file should contain integration tests for the UserDashboard component. Ensure to test the interaction with the user API and the rendering of user data. Use Jest and React Testing Library for testing.",
-      "dependencies": [
-        "jest",
-        "react-testing-library"
-      ]
-    },
-    {
-      "path": "next.config.js",
+      "path": "main/preload/api.js",
       "language": "javascript",
-      "description": "This file should configure Next.js settings, including environment variables and custom webpack configurations if necessary. Ensure to optimize for performance and compatibility.",
-      "dependencies": []
+      "description": "Define the API communication logic in this preload script. This should securely expose the necessary API functions to the renderer process while ensuring that sensitive operations are handled in the main process.",
+      "dependencies": [],
+      "internalDependencies": []
     },
     {
-      "path": "prisma.schema",
-      "language": "prisma",
-      "description": "This file should define the Prisma schema for the PostgreSQL database. Ensure to include models for users, tools, and submissions, and define relationships between them. Run migrations to keep the database in sync with the schema.",
-      "dependencies": []
+      "path": "main/preload/database.js",
+      "language": "javascript",
+      "description": "Implement the database interaction logic in this preload script. This should handle all interactions with the SQLite database, including queries and updates, while ensuring secure access from the renderer process.",
+      "dependencies": [
+        "sqlite3"
+      ],
+      "internalDependencies": []
     },
     {
-      "path": "env.config",
-      "language": "plaintext",
-      "description": "This file should contain environment variables for the application, including database connection strings and secret keys. Ensure to keep sensitive information secure and not expose it in version control.",
-      "dependencies": []
+      "path": "main/config.js",
+      "language": "javascript",
+      "description": "Store configuration settings for the application in this file. Include environment variables, API keys, and other constants that the main process will need to access throughout the application lifecycle.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "main/main.js",
+      "language": "javascript",
+      "description": "Implement the core logic of the Electron main process in this file. Handle IPC (Inter-Process Communication) between the main and renderer processes, manage application state, and respond to events such as window creation and closure.",
+      "dependencies": [
+        "electron"
+      ],
+      "internalDependencies": [
+        "main/config.js",
+        "main/preload/api.js",
+        "main/preload/database.js"
+      ]
+    },
+    {
+      "path": "main/preload.js",
+      "language": "javascript",
+      "description": "This preload script is responsible for securely exposing specific Node.js APIs to the renderer process while maintaining context isolation. Define the APIs that should be accessible and ensure that they are safe for use in the renderer.",
+      "dependencies": [
+        "electron"
+      ],
+      "internalDependencies": [
+        "main/preload/api.js"
+      ]
+    },
+    {
+      "path": "renderer/components/constants/apiEndpoints.js",
+      "language": "javascript",
+      "description": "Define API endpoints in this file for use throughout the application. This should include constants for all API routes that the application will interact with, ensuring consistency and ease of updates.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/constants/appConstants.js",
+      "language": "javascript",
+      "description": "Store application-wide constants in this file. This may include configuration settings, default values, and any other constants that need to be accessed across multiple components.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/utils/api.js",
+      "language": "javascript",
+      "description": "Implement utility functions for API communication in this file. These functions should handle HTTP requests to the defined API endpoints, manage responses, and handle errors appropriately.",
+      "dependencies": [
+        "axios"
+      ],
+      "internalDependencies": [
+        "renderer/components/constants/apiEndpoints.js"
+      ]
+    },
+    {
+      "path": "renderer/utils/helpers.js",
+      "language": "javascript",
+      "description": "Create helper functions in this file that can be used throughout the application. These functions should provide common utilities such as data formatting, validation, and other reusable logic.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/hooks/useAuth.js",
+      "language": "javascript",
+      "description": "Create a custom React hook in this file for managing user authentication. This hook should handle login, logout, and session management, utilizing OAuth2. Ensure to return relevant state and functions for use in components.",
+      "dependencies": [
+        "axios"
+      ],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/hooks/useData.js",
+      "language": "javascript",
+      "description": "Implement a custom React hook in this file for fetching and managing data from the SQLite database. This hook should handle data retrieval, updates, and error management, returning the necessary state and functions for components.",
+      "dependencies": [
+        "axios"
+      ],
+      "internalDependencies": [
+        "renderer/utils/api.js"
+      ]
+    },
+    {
+      "path": "renderer/components/Header.jsx",
+      "language": "javascript",
+      "description": "Create the Header component in this file. This component should display the application title and navigation links. Ensure it is responsive and styled appropriately, and consider using props for dynamic content.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/Footer.jsx",
+      "language": "javascript",
+      "description": "Implement the Footer component in this file. This component should contain copyright information and any relevant links. Ensure it is styled consistently with the Header component.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/UserProfile.jsx",
+      "language": "javascript",
+      "description": "Develop the UserProfile component in this file. This component should display user information and allow for user interactions such as editing the profile. Ensure to manage state effectively and handle user input.",
+      "dependencies": [],
+      "internalDependencies": [
+        "renderer/components/hooks/useAuth.js",
+        "renderer/components/hooks/useData.js"
+      ]
+    },
+    {
+      "path": "renderer/App.jsx",
+      "language": "javascript",
+      "description": "Define the main App component in this file. Structure the application layout, manage routing if necessary, and integrate any global state management. Ensure to import and utilize child components effectively.",
+      "dependencies": [
+        "react-router-dom"
+      ],
+      "internalDependencies": [
+        "renderer/components/Header.jsx",
+        "renderer/components/Footer.jsx",
+        "renderer/components/UserProfile.jsx"
+      ]
+    },
+    {
+      "path": "renderer/index.jsx",
+      "language": "javascript",
+      "description": "This file serves as the entry point for the React application. Set up the React rendering process, including the root component and any necessary providers (like context providers for state management). Ensure to import React and ReactDOM.",
+      "dependencies": [
+        "react",
+        "react-dom"
+      ],
+      "internalDependencies": [
+        "renderer/App.jsx"
+      ]
+    },
+    {
+      "path": "renderer/components/styles/App.css",
+      "language": "css",
+      "description": "Define the main styles for the application in this CSS file. Ensure to include styles for layout, typography, and responsive design. Use class names that are consistent with the component structure.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "renderer/components/styles/components.css",
+      "language": "css",
+      "description": "Create component-specific styles in this CSS file. Ensure that styles are modular and scoped to individual components to avoid conflicts. Include styles for the Header, Footer, and UserProfile components.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "main/index.js",
+      "language": "javascript",
+      "description": "This file serves as the entry point for the Electron application. It initializes the main process, sets up the application window, and handles application lifecycle events. Ensure to import necessary modules from Electron and configure the window settings appropriately.",
+      "dependencies": [
+        "electron"
+      ],
+      "internalDependencies": [
+        "main/main.js",
+        "main/preload.js"
+      ]
     },
     {
       "path": "package.json",
       "language": "json",
-      "description": "This file should define the project's dependencies, scripts, and metadata. Ensure to include all necessary packages for the application to function correctly and specify scripts for building and running the application.",
-      "dependencies": []
+      "description": "Manage project metadata and dependencies in this file. Ensure to include all necessary dependencies for both the main and renderer processes, as well as scripts for building and running the application.",
+      "dependencies": [],
+      "internalDependencies": []
     },
     {
-      "path": "tsconfig.json",
-      "language": "json",
-      "description": "This file should configure TypeScript settings for the project, including compiler options and type definitions. Ensure to enable strict type checking for better code quality.",
-      "dependencies": []
+      "path": ".gitignore",
+      "language": "file",
+      "description": "Define the Git ignore rules in this file. Specify files and directories that should not be tracked by Git, such as node_modules, build artifacts, and sensitive configuration files.",
+      "dependencies": [],
+      "internalDependencies": []
     },
     {
       "path": "README.md",
       "language": "markdown",
-      "description": "This file should provide documentation for the project, including setup instructions, usage guidelines, and contribution guidelines. Ensure to keep it clear and concise for future developers.",
-      "dependencies": []
+      "description": "Provide comprehensive documentation for the project in this file. Include setup instructions, usage guidelines, and any other relevant information that will assist developers and users in understanding the application.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "main/shared/types/",
+      "language": "typescript",
+      "description": "Create a directory for type definitions if using TypeScript. This should include type definitions for data structures used throughout the application, ensuring type safety and clarity.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "main/database/migrations/",
+      "language": "sql",
+      "description": "Create a directory for database migration files. Each migration file should handle changes to the database schema over time, ensuring that the database can be updated without data loss.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "public/icons/",
+      "language": "file",
+      "description": "Create a directory for application icons. Store all icon files used throughout the application, ensuring they are optimized for performance and accessibility.",
+      "dependencies": [],
+      "internalDependencies": []
+    },
+    {
+      "path": "public/images/",
+      "language": "file",
+      "description": "Create a directory for images used in the application. Store all image files, ensuring they are optimized for performance and properly referenced in the application.",
+      "dependencies": [],
+      "internalDependencies": []
     }
   ],
   "metadata": {
-    "name": "Tool Verification Platform",
-    "description": "A web application for user authentication, tool and material verification, and admin management."
+    "name": "My Desktop App",
+    "description": "A desktop application built with Electron and React, utilizing SQLite for data management and OAuth2 for user authentication."
   },
-  "createdAt": "2026-04-21T19:52:20.299Z",
-  "projectId": "cmo91c30m0002uvq57malgc5i",
+  "platform": "desktop",
+  "createdAt": "2026-05-17T12:48:06.870Z",
+  "projectId": "cmor6g6yc0002ky7c8tuxr8ik",
   "deployment": {
-    "strategy": "vercel",
+    "strategy": "github_releases",
     "requiredKeys": [
-      "DATABASE_URL",
-      "NEXTAUTH_SECRET"
+      "KEY_1",
+      "KEY_2"
     ],
     "buildCommands": [
       "npm install",
-      "npm run build"
+      "npm run build",
+      "npm run electron:build"
     ]
   },
-  "manifestId": "cmo91c30m0002uvq57malgc5i",
-  "description": "A web application for user authentication, tool and material verification, and admin management.",
-  "projectType": "nextjs"
+  "manifestId": "3444209866ae1807670d73df5d2fd701",
+  "description": "A desktop application built with Electron and React, utilizing SQLite for data management and OAuth2 for user authentication.",
+  "projectType": "electron",
+  "resolvedStack": "Electron + React + SQLite"
 }

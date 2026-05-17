@@ -220,7 +220,7 @@ function AIPanel({ activeFile, activeContent, projectId, onApply, pendingContent
         activeFile.path,
         activeContent,
         userMsg,
-        null, // featureContext
+        projectId,
         visualContext
       );
 
@@ -369,15 +369,15 @@ export default function EditorPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [functions, setFunctions] = useState([]);
   const [previewUrl, setPreviewUrl] = useState('http://localhost:5173');
-  
   // Dev Server State
   const [serverRunning, setServerRunning] = useState(false);
   const [serverLogs, setServerLogs] = useState([]);
+  const [cdpPort, setCdpPort] = useState(null);
+  const [cdpConnected, setCdpConnected] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
-  const terminalEndRef = useRef(null);
-  
-  const iframeRef = useRef(null);
   const editorRef = useRef(null);
+  const webviewRef = useRef(null);
+  const terminalEndRef = useRef(null);
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -415,16 +415,164 @@ export default function EditorPage() {
   const toggleServer = async () => {
     if (serverRunning) {
       await window.electronAPI.server.stop();
+      setCdpPort(null);
+      setCdpConnected(false);
     } else {
       setServerLogs([{ text: '> Starting server...', type: 'info', id: Date.now() }]);
       setShowTerminal(true);
-      await window.electronAPI.server.start({ 
+      const res = await window.electronAPI.server.start({ 
         projectId, 
         platform: project?.manifest?.platform || 'web',
         techStack: project?.manifest?.techStack?.framework || 'nextjs'
       });
+      if (res.success && res.cdpPort) {
+        setCdpPort(res.cdpPort);
+      }
     }
   };
+
+  // CDP WebSocket Connection (For Desktop WYSIWYG)
+  useEffect(() => {
+    if (!cdpPort) return;
+    
+    let ws = null;
+    let pollInterval = null;
+    let attempts = 0;
+    
+    const connectToCDP = async () => {
+       const res = await window.electronAPI.server.getCdpWsUrl(cdpPort);
+       if (res.success && res.url) {
+         clearInterval(pollInterval);
+         console.log('[CDP] Connecting to:', res.url);
+         
+         ws = new WebSocket(res.url);
+         ws.onopen = () => {
+           console.log('[CDP] Connected');
+           setCdpConnected(true);
+           
+           // Enable Runtime events to catch console.log
+           ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
+           
+           // Inject our Inspector script into the target window
+           const inspectorScript = `
+             if (!window.__axiom_inspect_injected) {
+               window.__axiom_inspect_injected = true;
+               
+               const HIGHLIGHT_STYLE = \`
+                 .axiom-inspect-highlight {
+                   outline: 2px solid #6366f1 !important;
+                   outline-offset: -2px !important;
+                   cursor: crosshair !important;
+                   background-color: rgba(99, 102, 241, 0.1) !important;
+                   transition: all 0.1s ease;
+                 }
+               \`;
+               
+               const styleEl = document.createElement('style');
+               styleEl.textContent = HIGHLIGHT_STYLE;
+               document.head.appendChild(styleEl);
+
+               let highlightedElement = null;
+
+               function findAxiomTarget(el) {
+                 while (el && el !== document.body) {
+                   if (el.dataset && (el.dataset.axiomFile || el.dataset.axiomComponent)) {
+                     return el;
+                   }
+                   el = el.parentElement;
+                 }
+                 return null;
+               }
+
+               document.addEventListener('mouseover', (e) => {
+                 const target = findAxiomTarget(e.target);
+                 if (highlightedElement && highlightedElement !== target) {
+                   highlightedElement.classList.remove('axiom-inspect-highlight');
+                 }
+                 if (target) {
+                   target.classList.add('axiom-inspect-highlight');
+                   highlightedElement = target;
+                 }
+               }, true);
+
+               document.addEventListener('mouseout', (e) => {
+                 if (highlightedElement) {
+                   highlightedElement.classList.remove('axiom-inspect-highlight');
+                   highlightedElement = null;
+                 }
+               }, true);
+
+               document.addEventListener('click', (e) => {
+                 const target = findAxiomTarget(e.target);
+                 if (target) {
+                   e.preventDefault();
+                   e.stopPropagation();
+                   const payload = {
+                     file: target.dataset.axiomFile || null,
+                     component: target.dataset.axiomComponent || null,
+                     tagName: target.tagName.toLowerCase(),
+                     text: target.innerText?.substring(0, 50) || ''
+                   };
+                   console.log('AXIOM_INSPECT::' + JSON.stringify(payload));
+                 }
+               }, true);
+               
+               console.log("Axiom Inspector injected via CDP.");
+             }
+           `;
+           
+           ws.send(JSON.stringify({
+             id: 2,
+             method: 'Runtime.evaluate',
+             params: { expression: inspectorScript }
+           }));
+         };
+         
+         ws.onmessage = (msg) => {
+           const data = JSON.parse(msg.data);
+           if (data.method === 'Runtime.consoleAPICalled') {
+              const args = data.params.args;
+              if (args && args.length > 0 && args[0].value && typeof args[0].value === 'string' && args[0].value.startsWith('AXIOM_INSPECT::')) {
+                 const jsonStr = args[0].value.substring(15);
+                 try {
+                   const payload = JSON.parse(jsonStr);
+                   console.log('[Editor] CDP Inspect click received:', payload);
+                   setSelectedElement(payload);
+                   
+                   if (payload.file) {
+                     const fileNode = { path: payload.file, name: payload.file.split('/').pop() };
+                     openFile(fileNode);
+                     
+                     setTimeout(() => {
+                       const promptInput = document.getElementById('ai-prompt-input');
+                       if (promptInput) promptInput.focus();
+                     }, 100);
+                   }
+                 } catch (e) {
+                   console.warn("Failed to parse AXIOM_INSPECT payload:", e);
+                 }
+              }
+           }
+         };
+         
+         ws.onclose = () => setCdpConnected(false);
+       } else {
+         attempts++;
+         if (attempts > 15) { // 15 seconds timeout
+           clearInterval(pollInterval);
+           console.warn("[CDP] Failed to connect after 15 attempts.");
+         }
+       }
+    };
+    
+    pollInterval = setInterval(connectToCDP, 1000);
+    connectToCDP(); // Try immediately
+    
+    return () => {
+      clearInterval(pollInterval);
+      if (ws) ws.close();
+    };
+  }, [cdpPort, openFile]);
 
   // Parse functions from content
   useEffect(() => {
@@ -456,88 +604,44 @@ export default function EditorPage() {
 
   const [selectedElement, setSelectedElement] = useState(null);
 
-  // Inspector Listener
+  // Setup Webview IPC listener
   useEffect(() => {
-    const handleMessage = (event) => {
-      if (event.data?.type === 'AXIOM_INSPECT') {
-        const { filePath, line, tag, classes, text, component } = event.data;
-        if (filePath) {
-          console.log("[Inspector] Navigating to:", filePath, "line:", line, "component:", component);
-          setSelectedElement({ tag, classes, text, component });
-          // Try to find the file and open it
-          const node = files.find(f => f.path.includes(filePath) || filePath.includes(f.path));
-          if (node) {
-            openFile(node).then(() => {
-              if (line) setTimeout(() => jumpToLine(line), 100);
-            });
-          }
+    const webview = webviewRef.current;
+    if (!webview) return;
+
+    const handleIpcMessage = (event) => {
+      if (event.channel === 'axiom-inspect-click') {
+        const payload = event.args[0];
+        console.log('[Editor] Inspect click received:', payload);
+        setSelectedElement(payload);
+        
+        // Open the file in editor if it's not open
+        if (payload.file) {
+          const fileNode = { path: payload.file, name: payload.file.split('/').pop() };
+          openFile(fileNode);
+          
+          // Focus prompt input
+          setTimeout(() => {
+            const promptInput = document.getElementById('ai-prompt-input');
+            if (promptInput) promptInput.focus();
+          }, 100);
         }
       }
     };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [files, openFile]);
 
-  // Inject inspector script into iframe
-  useEffect(() => {
-    if (showPreview && iframeRef.current) {
-      const inject = () => {
-        try {
-          const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow.document;
-          const script = doc.createElement('script');
-          script.textContent = `
-            (function() {
-              console.log("[Axiom Inspector] Injected");
-              document.addEventListener('click', (e) => {
-                if (e.altKey || e.ctrlKey) { // Trigger with Alt+Click
-                  e.preventDefault();
-                  e.stopPropagation();
-                  
-                  // Try to find source info (React devtools often inject this)
-                  let target = e.target;
-                  let filePath = null;
-                  let line = null;
-                  let component = null;
-                  
-                  // Use Axiom injected metadata or fallback to standard source maps
-                  while (target && target !== document.body) {
-                    if (target.dataset?.axiomComponent && !component) {
-                      component = target.dataset.axiomComponent;
-                    }
-                    if (target.dataset?.axiomFile && !filePath) {
-                      filePath = target.dataset.axiomFile;
-                    }
-                    if (target.dataset?.source && !filePath) {
-                      filePath = target.dataset.source;
-                    }
-                    if (filePath) break;
-                    target = target.parentElement;
-                  }
-                  
-                  window.parent.postMessage({ 
-                    type: 'AXIOM_INSPECT', 
-                    filePath: filePath || 'unknown',
-                    line: line,
-                    component: component || 'unknown',
-                    tag: e.target.tagName.toLowerCase(),
-                    classes: e.target.className,
-                    text: e.target.innerText.substring(0, 50)
-                  }, '*');
-                }
-              }, true);
-            })();
-          `;
-          doc.head.appendChild(script);
-        } catch (err) {
-          console.warn("[Inspector] Injection failed (XSS/CORS?):", err);
+    webview.addEventListener('ipc-message', handleIpcMessage);
+    
+    // When webview finishes loading, ensure dev server console is ready
+    webview.addEventListener('did-finish-load', () => {
+      console.log('[Editor] Webview finished loading');
+      // Set to inspect mode automatically
+      webview.send('toggle-inspect', true);
+    });
 
-        }
-      };
-      
-      const timer = setTimeout(inject, 2000); // Wait for load
-      return () => clearTimeout(timer);
-    }
-  }, [showPreview]);
+    return () => {
+      webview.removeEventListener('ipc-message', handleIpcMessage);
+    };
+  }, [showPreview, openFile]);
 
   console.log("[EditorPage] Render. pendingContent exists?", !!pendingContent);
   if (pendingContent) {
@@ -863,12 +967,33 @@ export default function EditorPage() {
                         <Info className="w-3 h-3" /> {previewUrl}
                       </div>
                     </div>
-                    <iframe
-                      ref={iframeRef}
-                      src={previewUrl}
-                      className="flex-1 w-full border-none"
-                      title="Project Preview"
-                    />
+                    {project?.manifest?.platform === 'desktop' ? (
+                      <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 text-center px-8 border border-slate-800 m-4 rounded-xl shadow-inner">
+                        <Monitor className="w-16 h-16 text-indigo-500/50 mb-6" />
+                        <h3 className="text-xl font-bold text-white mb-2">Desktop WYSIWYG Active</h3>
+                        <p className="text-slate-400 max-w-sm mb-6">
+                          The desktop app is running in a separate native window. Axiom Forge is attached as a debugger.
+                        </p>
+                        <div className="flex items-center gap-3 bg-slate-800 px-4 py-2 rounded-lg border border-slate-700">
+                          <div className={`w-3 h-3 rounded-full ${cdpConnected ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-amber-500 animate-pulse'}`} />
+                          <span className="text-sm font-medium text-slate-300">
+                            {cdpConnected ? 'CDP Debugger Connected' : 'Waiting for app to start...'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-6 mt-4">
+                          Hover over elements in the app window to inspect. Click to open the file and trigger the AI prompt here.
+                        </p>
+                      </div>
+                    ) : (
+                      <webview
+                        ref={webviewRef}
+                        src={previewUrl}
+                        preload={window.electronAPI.system.getWebviewPreloadPath()}
+                        className="flex-1 w-full border-none"
+                        title="Project Preview"
+                        webpreferences="contextIsolation=yes, sandbox=no"
+                      />
+                    )}
                   </div>
                 ) : (
                   <>

@@ -10,6 +10,7 @@ import Store from 'electron-store';
 import { SecurityManager } from '../src/lib/security.js';
 import { TaskOrchestrator } from '../src/lib/taskOrchestrator.js';
 import { DevServerManager } from '../src/lib/devServerManager.js';
+import { HardwareManager } from '../src/lib/hardware.js';
 import { IKFirewallCore } from '@ik-firewall/core';
 
 process.env.IK_DESKTOP_FREE_MODE = 'true'; // Protect local usage from web telemetry
@@ -62,7 +63,8 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      webviewTag: true
     }
   });
 
@@ -626,18 +628,96 @@ ipcMain.handle('ik:set-config', (event, newConfig) => {
 
 // Perzistentno čuvanje Custom Direktiva na disku
 ipcMain.handle('ik:get-custom-directive', () => {
-  return appStore.get('axiom_custom_directives', '');
+  return store.get('axiom_custom_directives', '');
 });
 ipcMain.handle('ik:set-custom-directive', (event, text) => {
-  appStore.set('axiom_custom_directives', text);
+  store.set('axiom_custom_directives', text);
+  return { success: true };
+});
+
+// Hardware & Model Config IPCs
+ipcMain.handle('hardware:get-profile', () => {
+  return HardwareManager.getHardwareProfile();
+});
+
+ipcMain.handle('hardware:get-selected-model', () => {
+  return store.get('selected_llm_model', null); // Returns null if not set
+});
+
+ipcMain.handle('hardware:set-selected-model', (event, { modelId }) => {
+  store.set('selected_llm_model', modelId);
+  return { success: true };
+});
+
+ipcMain.handle('hardware:get-builder-model', () => {
+  return store.get('selected_builder_model', null);
+});
+
+ipcMain.handle('hardware:set-builder-model', (event, { modelId }) => {
+  store.set('selected_builder_model', modelId);
+  return { success: true };
+});
+
+ipcMain.handle('hardware:get-editor-model', () => {
+  return store.get('selected_editor_model', null);
+});
+
+ipcMain.handle('hardware:set-editor-model', (event, { modelId }) => {
+  store.set('selected_editor_model', modelId);
   return { success: true };
 });
 
 // AI code editing via local Ollama (With IK Firewall)
-ipcMain.handle('editor:ai-edit', async (event, { filePath, fileContent, prompt, featureContext, visualContext }) => {
+ipcMain.handle('editor:ai-edit', async (event, { filePath, fileContent, prompt, projectId, visualContext }) => {
   try {
+    let featureContext = '';
+    
+    // Attempt to load axiom-features.json and extract associated files for the LLM
+    if (projectId) {
+      try {
+        const projectDir = path.join(os.homedir(), '.axiom-forge', 'projects', projectId);
+        const featuresPath = path.join(projectDir, 'axiom-features.json');
+        if (fsSync.existsSync(featuresPath)) {
+          const featuresData = JSON.parse(fsSync.readFileSync(featuresPath, 'utf-8'));
+          
+          // Try to find the feature matching visual context or the edited file
+          const targetComponent = visualContext?.component || null;
+          const targetFile = visualContext?.file || path.basename(filePath);
+          
+          let matchedFeature = null;
+          
+          for (const feat of featuresData.features || []) {
+             const hasFile = feat.files?.some(f => f.path.includes(targetFile) || f.path.includes(targetComponent));
+             if (hasFile || feat.id === targetComponent || feat.name === targetComponent) {
+               matchedFeature = feat;
+               break;
+             }
+          }
+          
+          if (matchedFeature) {
+            featureContext += `\n--- ASSOCIATED FEATURE: ${matchedFeature.name} ---\n`;
+            featureContext += `Description: ${matchedFeature.description}\n\n`;
+            
+            // Append the content of associated files (excluding the one currently being edited)
+            for (const f of matchedFeature.files || []) {
+               const absPath = path.join(projectDir, f.path);
+               if (absPath !== filePath && fsSync.existsSync(absPath)) {
+                  // limit size to avoid blowing up context window (e.g. max 200 lines or 10kb)
+                  const content = fsSync.readFileSync(absPath, 'utf-8');
+                  featureContext += `// File: ${f.path} (Role: ${f.role})\n`;
+                  featureContext += content.substring(0, 3000) + (content.length > 3000 ? '\n...[truncated]...\n' : '\n');
+                  featureContext += `\n`;
+               }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[MAIN] Could not load feature context:', err.message);
+      }
+    }
+
     // 1. Učitavamo sačuvanu direktivu iz baze/fajla i spajamo sa axiom-features.json
-    const customDirective = appStore.get('axiom_custom_directives', '');
+    const customDirective = store.get('axiom_custom_directives', '');
     let contextStr = featureContext ? `FEATURE_CONTEXT (axiom-features.json):\n${featureContext}\n` : '';
     if (customDirective) {
       contextStr += `USER_CUSTOM_DIRECTIVES:\n${customDirective}\n`;
@@ -663,7 +743,7 @@ Output ONLY a JSON object: {"ranges": [{"start": 1, "end": 10}], "symbols": ["Lo
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3.2:1b',
+        model: store.get('selected_llm_model', 'qwen2.5-coder:1.5b'),
         messages: [{ role: 'user', content: analysisPrompt + "\n\nCODE:\n" + fileContent }],
         stream: false
       })
@@ -708,7 +788,7 @@ Generate the exact logical changes needed. Output ONLY the new code. No markdown
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3.2:1b',
+        model: store.get('selected_llm_model', 'qwen2.5-coder:1.5b'),
         messages: [{ role: 'user', content: solutionPrompt }],
         stream: false
       })
@@ -749,7 +829,7 @@ Output ONLY the final integrated code for this specific block (lines ${startLine
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama3.2:1b',
+        model: store.get('selected_llm_model', 'qwen2.5-coder:1.5b'),
         messages: [
           { role: 'system', content: integratorSystemPrompt },
           { role: 'user', content: integratorUserMessage }
@@ -839,6 +919,9 @@ ipcMain.handle('task:start-generation', async (event, { manifestId, projectId, t
     fsSync.appendFileSync(logPath, `[${timestamp}] ManifestId: ${manifestId} | ProjectId: ${projectId}\n`);
     
     // Start generation asynchronously
+    // Ensure we are using the currently selected model from user configuration
+    taskOrchestrator.ollama.model = store.get('selected_llm_model', 'qwen2.5-coder:1.5b');
+    
     taskOrchestrator.startGeneration(manifestId, projectId, token, (update) => {
       fsSync.appendFileSync(logPath, `[${new Date().toISOString()}] PROGRESS ${update.progress}%: ${update.phase} - ${update.message}\n`);
       
@@ -947,10 +1030,13 @@ ipcMain.handle('task:configure-project', async (event, { projectId, envVars }) =
 
 ipcMain.handle('task:start-deployment', async (event, { projectId }) => {
   try {
-    // Clear old metadata before starting a fresh deploy
+    // Get the full project details to pass its metadata to the orchestrator
     const projects = store.get('projects', []);
     const idx = projects.findIndex(p => p.id === projectId);
+    
+    let projectMetadata = {};
     if (idx >= 0) {
+      projectMetadata = projects[idx].metadata || {};
       projects[idx].status = 'deploying';
       projects[idx].metadata = {
         ...projects[idx].metadata,
@@ -960,7 +1046,7 @@ ipcMain.handle('task:start-deployment', async (event, { projectId }) => {
       store.set('projects', projects);
     }
 
-    const result = await taskOrchestrator.startDeployment(projectId, (update) => {
+    const result = await taskOrchestrator.startDeployment(projectId, projectMetadata, (update) => {
       mainWindow?.webContents.send('task:progress', update);
       floatingWindow?.webContents.send('task:progress', update);
     });
@@ -1091,6 +1177,15 @@ ipcMain.handle('ollama:pull-model', async (event, { model }) => {
   }
 });
 
+ipcMain.handle('ollama:unload-model', async (event, { model }) => {
+  try {
+    return await taskOrchestrator.ollama.unloadModel(model);
+  } catch (error) {
+    console.error('[Ollama] Unload model error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 /**
  * Window Management IPC
  */
@@ -1178,8 +1273,8 @@ ipcMain.handle('server:start', async (event, { projectId, platform, techStack })
     const projectsDir = path.join(os.homedir(), 'AxiomProjects');
     const projectPath = path.join(projectsDir, projectId);
     
-    devServerManager.start(projectId, projectPath, platform, techStack);
-    return { success: true };
+    const cdpPort = await devServerManager.start(projectId, projectPath, platform, techStack);
+    return { success: true, cdpPort };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -1189,6 +1284,21 @@ ipcMain.handle('server:stop', async () => {
   try {
     devServerManager.stop();
     return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('server:get-cdp-ws-url', async (event, { port }) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json`);
+    const data = await res.json();
+    // Usually the first target is the main window we want to inspect
+    const target = data.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
+    if (target) {
+      return { success: true, url: target.webSocketDebuggerUrl };
+    }
+    return { success: false, error: 'No page target found' };
   } catch (err) {
     return { success: false, error: err.message };
   }

@@ -278,7 +278,7 @@ export class TaskOrchestrator extends EventEmitter {
       // Verify model - provide feedback before this potentially slow call
       onProgress({ 
         phase: 'generate-files', 
-        message: 'Checking if AI model (llama3.2:1b) is loaded...', 
+        message: `Checking if AI model (${this.ollama.model}) is loaded...`, 
         progress: 17 
       });
       
@@ -288,7 +288,7 @@ export class TaskOrchestrator extends EventEmitter {
         console.log(`[Orchestrator] Model missing. Starting pull...`);
         onProgress({ 
           phase: 'pull-model', 
-          message: `Model llama3.2:1b not found. Attempting download...`,
+          message: `Model ${this.ollama.model} not found. Attempting download...`,
           progress: 18
         });
         
@@ -500,9 +500,9 @@ export class TaskOrchestrator extends EventEmitter {
   }
 
   /**
-   * Start deployment to GitHub + Vercel
+   * Start deployment to GitHub + Hosting Provider (Vercel)
    */
-  async startDeployment(projectId, onProgress = () => {}) {
+  async startDeployment(projectId, projectMetadata = {}, onProgress = () => {}) {
     const taskId = this._createTaskId();
     
     const task = {
@@ -535,33 +535,42 @@ export class TaskOrchestrator extends EventEmitter {
 
       task.logs.push({ time: Date.now(), message: `Pushed to GitHub: ${githubResult.repoUrl}` });
 
-      // Phase 2: Deploy to Provider
-      const provider = manifest.deployment?.provider || 'vercel';
-      this._updateTask(taskId, { phase: `deploy-${provider}`, progress: 50 });
-      onProgress({ phase: 'deploying', message: `Deploying to ${provider}...` });
+      // Phase 2: Deploy to Provider (ONLY FOR WEB PROJECTS)
+      const platform = projectMetadata?.techStack?.platform || 'web';
+      let deployResult = null;
+      let verified = false;
 
-      const deployResult = await this.deployment.deploy(
-        provider,
-        projectId, 
-        githubResult,
-        (progress) => {
-          this._updateTask(taskId, { progress: 50 + (progress * 0.4) });
-          onProgress({ ...progress, progress: 50 + (progress * 0.4) });
+      if (platform === 'web') {
+        const provider = projectMetadata?.deployment?.provider || 'vercel';
+        this._updateTask(taskId, { phase: `deploy-${provider}`, progress: 50 });
+        onProgress({ phase: 'deploying', message: `Deploying to ${provider}...` });
+
+        deployResult = await this.deployment.deploy(
+          provider,
+          projectId, 
+          githubResult,
+          (progress) => {
+            this._updateTask(taskId, { progress: 50 + (progress * 0.4) });
+            onProgress({ ...progress, progress: 50 + (progress * 0.4) });
+          }
+        );
+
+        task.logs.push({ time: Date.now(), message: `Deployed to ${provider}: ${deployResult.url}` });
+
+        // Phase 3: Verify Deployment
+        this._updateTask(taskId, { phase: TaskPhase.VERIFY_DEPLOYMENT, progress: 90 });
+        onProgress({ phase: 'verify-deployment', message: 'Verifying deployment...' });
+
+        verified = await this.deployment.verifyDeployment(deployResult.url);
+
+        if (verified) {
+          task.logs.push({ time: Date.now(), message: 'Deployment verified successfully' });
+        } else {
+          task.logs.push({ time: Date.now(), message: 'Deployment verification pending', level: 'warn' });
         }
-      );
-
-      task.logs.push({ time: Date.now(), message: `Deployed to ${provider}: ${deployResult.url}` });
-
-      // Phase 3: Verify Deployment
-      this._updateTask(taskId, { phase: TaskPhase.VERIFY_DEPLOYMENT, progress: 90 });
-      onProgress({ phase: 'verify-deployment', message: 'Verifying deployment...' });
-
-      const verified = await this.deployment.verifyDeployment(deployResult.url);
-
-      if (verified) {
-        task.logs.push({ time: Date.now(), message: 'Deployment verified successfully' });
       } else {
-        task.logs.push({ time: Date.now(), message: 'Deployment verification pending', level: 'warn' });
+        task.logs.push({ time: Date.now(), message: `Deployment to web hosting skipped (Platform: ${platform})` });
+        onProgress({ phase: 'complete', message: `Web hosting skipped for ${platform} apps.` });
       }
 
       // Update task

@@ -18,6 +18,11 @@ const securityAPI = {
   clearAllTokens: () => ipcRenderer.invoke('security:clear-all-tokens')
 };
 
+// ==================== SYSTEM API ====================
+const systemAPI = {
+  getWebviewPreloadPath: () => `file://${require('path').join(__dirname, 'preload-webview.cjs').replace(/\\/g, '/')}`
+};
+
 // ==================== PROJECT MANAGEMENT API ====================
 const projectAPI = {
   getAll: () => ipcRenderer.invoke('project:get-all'),
@@ -59,11 +64,23 @@ const ollamaAPI = {
   checkInstalled: () => ipcRenderer.invoke('ollama:check-installed'),
   startServer: () => ipcRenderer.invoke('ollama:start-server'),
   pullModel: (model) => ipcRenderer.invoke('ollama:pull-model', { model }),
+  unloadModel: (model) => ipcRenderer.invoke('ollama:unload-model', { model }),
   onPullProgress: (callback) => {
     const handler = (event, data) => callback(data);
     ipcRenderer.on('ollama:pull-progress', handler);
     return () => ipcRenderer.removeListener('ollama:pull-progress', handler);
   }
+};
+
+// ==================== HARDWARE API ====================
+const hardwareAPI = {
+  getProfile: () => ipcRenderer.invoke('hardware:get-profile'),
+  getSelectedModel: () => ipcRenderer.invoke('hardware:get-selected-model'),
+  setSelectedModel: (modelId) => ipcRenderer.invoke('hardware:set-selected-model', { modelId }),
+  getBuilderModel: () => ipcRenderer.invoke('hardware:get-builder-model'),
+  setBuilderModel: (modelId) => ipcRenderer.invoke('hardware:set-builder-model', { modelId }),
+  getEditorModel: () => ipcRenderer.invoke('hardware:get-editor-model'),
+  setEditorModel: (modelId) => ipcRenderer.invoke('hardware:set-editor-model', { modelId })
 };
 
 // ==================== WINDOW MANAGEMENT API ====================
@@ -118,8 +135,8 @@ const appAPI = {
 const editorAPI = {
   writeFile: (projectId, filePath, content) =>
     ipcRenderer.invoke('editor:write-file', { projectId, filePath, content }),
-  aiEdit: (filePath, fileContent, prompt, featureContext) =>
-    ipcRenderer.invoke('editor:ai-edit', { filePath, fileContent, prompt, featureContext }),
+  aiEdit: (filePath, fileContent, prompt, projectId, visualContext) =>
+    ipcRenderer.invoke('editor:ai-edit', { filePath, fileContent, prompt, projectId, visualContext }),
   gitCommit: (projectId, message) =>
     ipcRenderer.invoke('project:commit', { projectId, message }),
   onAiChunk: (callback) => {
@@ -144,6 +161,7 @@ const serverAPI = {
     ipcRenderer.on('server:log', handler);
     return () => ipcRenderer.removeListener('server:log', handler);
   },
+  getCdpWsUrl: (port) => ipcRenderer.invoke('server:get-cdp-ws-url', { port }),
   onStatus: (callback) => {
     const handler = (event, data) => callback(data);
     ipcRenderer.on('server:status', handler);
@@ -157,13 +175,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   project: projectAPI,
   task: taskAPI,
   ollama: ollamaAPI,
+  hardware: hardwareAPI,
   window: windowAPI,
   deepLink: deepLinkAPI,
   shell: shellAPI,
   dialog: dialogAPI,
   app: appAPI,
   editor: editorAPI,
-  server: serverAPI
+  server: serverAPI,
+  system: systemAPI
 });
 
 console.log('[Preload] Axiom Forge secure API initialized (.cjs)');

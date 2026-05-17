@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "../../../ik-adapter-base"
+		},
+		{
+			"path": "../../../axiom-forge-rust"
 		}
 	],
 	"settings": {}

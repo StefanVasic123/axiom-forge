@@ -7,12 +7,25 @@
 
 import { spawn } from 'child_process';
 import path from 'path';
+import net from 'net';
 
 export class DevServerManager {
   constructor() {
     this.process = null;
     this.projectId = null;
+    this.cdpPort = null;
     this.listeners = new Set();
+  }
+
+  async getFreePort() {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.listen(0, '127.0.0.1', () => {
+        const port = server.address().port;
+        server.close(() => resolve(port));
+      });
+      server.on('error', reject);
+    });
   }
 
   /**
@@ -22,16 +35,17 @@ export class DevServerManager {
    * @param {string} platform - 'web', 'mobile', or 'desktop'
    * @param {string} techStack - 'nextjs', 'react', 'php', etc.
    */
-  start(projectId, projectPath, platform = 'web', techStack = 'nextjs') {
+  async start(projectId, projectPath, platform = 'web', techStack = 'nextjs') {
     if (this.process) {
       if (this.projectId === projectId) {
         this.emitLog('Server is already running for this project.\n');
-        return;
+        return this.cdpPort;
       }
       this.stop();
     }
 
     this.projectId = projectId;
+    this.cdpPort = null;
     
     // Determine command based on platform and techStack
     let command = 'npm';
@@ -42,7 +56,8 @@ export class DevServerManager {
       args = ['expo', 'start'];
     } else if (platform === 'desktop') {
       command = 'npm';
-      args = ['start'];
+      this.cdpPort = await this.getFreePort();
+      args = ['start', '--', `--remote-debugging-port=${this.cdpPort}`];
     } else if (techStack === 'php') {
       command = 'php';
       args = ['-S', 'localhost:8000'];
@@ -84,9 +99,11 @@ export class DevServerManager {
       });
 
       this.emitStatus('running');
+      return this.cdpPort;
 
     } catch (err) {
       this.emitLog(`\n> Error spawning server: ${err.message}\n`, 'error');
+      return null;
     }
   }
 
@@ -104,6 +121,7 @@ export class DevServerManager {
       
       this.process = null;
       this.projectId = null;
+      this.cdpPort = null;
       this.emitStatus('stopped');
     }
   }
